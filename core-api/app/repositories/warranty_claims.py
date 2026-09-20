@@ -38,6 +38,19 @@ def get(connection: sqlite3.Connection, claim_id: str) -> WarrantyClaim | None:
     return _row_to_claim(row)
 
 
+def descriptions_by_ticket_id(
+    connection: sqlite3.Connection, ticket_ids: list[str]
+) -> dict[str, str]:
+    if not ticket_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in ticket_ids)
+    rows = connection.execute(
+        f"SELECT ticket_id, description FROM warranty_claims WHERE ticket_id IN ({placeholders})",
+        tuple(ticket_ids),
+    ).fetchall()
+    return {row[0]: row[1] for row in rows}
+
+
 def matches_risk_keyword(description: str) -> bool:
     lowered = description.lower()
     return any(keyword in lowered for keyword in RISK_KEYWORDS)

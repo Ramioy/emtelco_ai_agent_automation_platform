@@ -11,12 +11,14 @@ from app.errors import DomainError
 from app.identity import Subject, get_subject
 from app.repositories import escalations as escalations_repo
 from app.repositories import sessions as sessions_repo
+from app.repositories import warranty_claims as warranty_claims_repo
 from app.schemas.escalations import (
     ALLOWED_TRANSITIONS,
     IN_PROGRESS,
     PENDING_AGENT,
     RESOLVED,
     SAFETY_RISK,
+    CustomerTicket,
     Escalation,
     EscalationCreateRequest,
     EscalationCreateResponse,
@@ -46,6 +48,9 @@ def create_escalation(
     client_id = identity.bound_client_id(connection, subject)
     if client_id is None and not subject.enforced:
         client_id = session.client_id
+    related_ticket_id = _resolve_related_ticket(
+        connection, client_id, payload.related_ticket_id
+    )
     ticket_id = f"ticket-{uuid.uuid4().hex[:8]}"
     escalation = escalations_repo.create(
         connection,
@@ -54,8 +59,45 @@ def create_escalation(
         client_id=client_id,
         reason=payload.reason,
         priority=payload.priority,
+        related_ticket_id=related_ticket_id,
     )
-    return EscalationCreateResponse(ticket_id=escalation.ticket_id, status=escalation.status)
+    return EscalationCreateResponse(
+        ticket_id=escalation.ticket_id,
+        status=escalation.status,
+        related_ticket_id=escalation.related_ticket_id,
+    )
+
+
+@router.get(
+    "/mine",
+    response_model=list[CustomerTicket],
+    dependencies=[Depends(require_api_key)],
+    summary="List the support tickets of the customer this conversation belongs to",
+)
+def list_my_tickets(
+    connection: sqlite3.Connection = Depends(get_db),
+    subject: Subject = Depends(get_subject),
+) -> list[CustomerTicket]:
+    """Takes no ticket number, so another customer's ticket is absent rather than refused."""
+    client_id = identity.current_client_id(connection, subject)
+    if client_id is None:
+        return []
+    tickets = escalations_repo.list_by_client(connection, client_id)
+    descriptions = warranty_claims_repo.descriptions_by_ticket_id(
+        connection, [ticket.ticket_id for ticket in tickets]
+    )
+    return [
+        CustomerTicket(
+            ticket_id=ticket.ticket_id,
+            origin=ticket.origin,
+            status=ticket.status,
+            topic=descriptions.get(ticket.ticket_id, ticket.reason),
+            created_at=ticket.created_at,
+            updated_at=ticket.updated_at,
+            related_ticket_id=ticket.related_ticket_id,
+        )
+        for ticket in tickets
+    ]
 
 
 @router.get(
@@ -128,3 +170,13 @@ def update_escalation(
         assignee=payload.assignee,
         resolution_note=payload.resolution_note,
     )
+
+
+def _resolve_related_ticket(
+    connection: sqlite3.Connection, client_id: str | None, requested: str | None
+) -> str | None:
+    """Dropped rather than refused: a wrong number must never block a request for a human."""
+    if requested is None or client_id is None:
+        return None
+    owned = {ticket.ticket_id for ticket in escalations_repo.list_by_client(connection, client_id)}
+    return requested if requested in owned else None

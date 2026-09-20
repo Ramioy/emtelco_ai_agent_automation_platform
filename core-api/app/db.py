@@ -1,4 +1,5 @@
 """SQLite connection helpers: schema initialization and per-request connections."""
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Iterator
@@ -9,10 +10,16 @@ from app.repositories import clients as clients_repo
 from app.repositories import orders as orders_repo
 from app.repositories import warranty as warranty_repo
 
+logger = logging.getLogger(__name__)
+
 SCHEMA_PATH = Path(__file__).parent / "data" / "schema.sql"
 
 # CREATE TABLE IF NOT EXISTS leaves an already-created table alone, so columns added after a
 # volume was first written need their own idempotent step.
+UNIQUE_INDEXES = (
+    ("idx_warranty_claims_ticket_id", "warranty_claims", "ticket_id"),
+)
+
 ADDED_COLUMNS = {
     "products": (("warranty_months", "INTEGER NOT NULL DEFAULT 12"),),
     "escalations": (
@@ -20,6 +27,7 @@ ADDED_COLUMNS = {
         ("assignee", "TEXT"),
         ("resolution_note", "TEXT"),
         ("updated_at", "TEXT"),
+        ("related_ticket_id", "TEXT"),
     ),
 }
 
@@ -40,11 +48,33 @@ def init_db(database_path: str | Path) -> sqlite3.Connection:
     connection.executescript(SCHEMA_PATH.read_text())
     connection.commit()
     add_missing_columns(connection)
+    add_unique_indexes(connection)
     clients_repo.seed(connection)
     catalog_repo.seed(connection)
     orders_repo.seed(connection)
     warranty_repo.seed(connection)
     return connection
+
+
+def add_unique_indexes(connection: sqlite3.Connection) -> None:
+    # A volume written before an index existed may already hold rows that violate it. Refusing
+    # to start would leave no way in to repair the data, so the duplicate is reported and the
+    # index skipped.
+    for name, table, column in UNIQUE_INDEXES:
+        try:
+            connection.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {name} ON {table} ({column})"
+            )
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            logger.warning(
+                "Index %s not created: %s.%s already holds duplicates in this database",
+                name,
+                table,
+                column,
+            )
+        else:
+            connection.commit()
 
 
 def add_missing_columns(connection: sqlite3.Connection) -> None:

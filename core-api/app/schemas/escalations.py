@@ -8,6 +8,7 @@ IN_PROGRESS = "in_progress"
 RESOLVED = "resolved"
 
 AGENT_REQUEST = "agent_request"
+WARRANTY_CLAIM = "warranty_claim"
 SAFETY_RISK = "safety_risk"
 
 # Three states are all a believable queue needs: waiting, taken by a named person, closed with
@@ -31,17 +32,38 @@ class Escalation(BaseModel):
     assignee: str | None = None
     resolution_note: str | None = None
     updated_at: str | None = None
+    related_ticket_id: str | None = None
+
+
+class CustomerTicket(BaseModel):
+    """Narrower than Escalation: hides the fields written for the operations console."""
+
+    ticket_id: str
+    origin: str
+    status: str
+    topic: str
+    created_at: str
+    updated_at: str | None = None
+    related_ticket_id: str | None = None
 
 
 class EscalationCreateRequest(BaseModel):
     session_id: str
     reason: str
     priority: str
+    # The ticket this hand-over follows up on, when the customer already holds one.
+    related_ticket_id: str | None = None
+
+    @field_validator("related_ticket_id")
+    @classmethod
+    def blank_related_is_absent(cls, value: str | None) -> str | None:
+        return (value or "").strip() or None
 
 
 class EscalationCreateResponse(BaseModel):
     ticket_id: str
     status: str
+    related_ticket_id: str | None = None
 
 
 class EscalationUpdateRequest(BaseModel):

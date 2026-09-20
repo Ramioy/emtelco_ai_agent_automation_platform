@@ -32,8 +32,9 @@ CREATE TABLE IF NOT EXISTS warranty_claims (
 CREATE TABLE IF NOT EXISTS escalations (        -- support tickets, see app/schemas/escalations.py
     ticket_id TEXT PRIMARY KEY, session_id TEXT, client_id TEXT,
     reason TEXT, priority TEXT, status TEXT, created_at TEXT,
-    origin TEXT NOT NULL DEFAULT 'agent_request',  -- 'agent_request' | 'safety_risk'
-    assignee TEXT, resolution_note TEXT, updated_at TEXT
+    origin TEXT NOT NULL DEFAULT 'agent_request',  -- 'agent_request' | 'warranty_claim' | 'safety_risk'
+    assignee TEXT, resolution_note TEXT, updated_at TEXT,
+    related_ticket_id TEXT                         -- the ticket this one is a follow-up of
 );
 
 -- The one customer an authenticated end user of the chat frontend is allowed to act as

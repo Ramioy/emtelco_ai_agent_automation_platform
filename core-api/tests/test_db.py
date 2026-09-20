@@ -95,3 +95,35 @@ def test_adding_columns_twice_changes_nothing(tmp_path):
     after = connection.execute("PRAGMA table_info(escalations)").fetchall()
     connection.close()
     assert before == after
+
+
+def test_init_db_survives_a_database_that_already_holds_duplicate_ticket_numbers(tmp_path):
+    db_path = tmp_path / "duplicates.db"
+    legacy = sqlite3.connect(db_path)
+    legacy.execute(
+        "CREATE TABLE warranty_claims (claim_id TEXT PRIMARY KEY, warranty_id TEXT, "
+        "client_id TEXT, description TEXT, ticket_id TEXT, escalated INTEGER, created_at TEXT)"
+    )
+    legacy.executemany(
+        "INSERT INTO warranty_claims VALUES (?, 'warranty-001', '1010101010', 'x', "
+        "'ticket-repeated', 0, '2026-01-01')",
+        [("claim-a",), ("claim-b",)],
+    )
+    legacy.commit()
+    legacy.close()
+
+    connection = init_db(db_path)
+    indexes = {row[1] for row in connection.execute("PRAGMA index_list(warranty_claims)")}
+    rows = connection.execute("SELECT COUNT(*) FROM warranty_claims").fetchone()[0]
+    connection.close()
+
+    assert "idx_warranty_claims_ticket_id" not in indexes
+    assert rows == 2
+
+
+def test_init_db_creates_the_ticket_number_index_on_a_clean_database(tmp_path):
+    connection = init_db(tmp_path / "clean.db")
+    indexes = {row[1] for row in connection.execute("PRAGMA index_list(warranty_claims)")}
+    connection.close()
+
+    assert "idx_warranty_claims_ticket_id" in indexes

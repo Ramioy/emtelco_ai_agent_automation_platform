@@ -22,6 +22,7 @@ as a set of tools by an orchestration layer (n8n) and has no UI of its own.
 - [Domains](#domains)
 - [Authentication and per-user isolation](#authentication-and-per-user-isolation)
 - [Ticket lifecycle](#ticket-lifecycle)
+  - [Reading a ticket back](#reading-a-ticket-back)
 - [Running the tests](#running-the-tests)
 - [Project structure](#project-structure)
 - [Persistence and resetting data](#persistence-and-resetting-data)
@@ -110,7 +111,7 @@ The API is organized into six tagged domains, matching how they appear in `/docs
 | `orders` | Order status, delivery tracking, and simulated purchases. |
 | `warranty` | Warranty coverage checks and claim filing, with automatic safety escalation. |
 | `sessions` | Current and cross-session conversational memory. |
-| `escalations` | Support tickets: raised by the agent or by the automatic safety escalation, then worked through their lifecycle from the operations console. |
+| `escalations` | Support tickets: every warranty claim, plus the hand-overs the agent raises and the automatic safety escalation, worked through their lifecycle from the operations console and readable by the customer they belong to. |
 
 ## Authentication and per-user isolation
 
@@ -122,7 +123,8 @@ Operator-only endpoints, which are deliberately outside the agent's tool catalog
 `GET /api/v1/orders`, `GET /api/v1/orders/by-client/{client_id}`,
 `PATCH /api/v1/orders/{order_id}/status`, `GET /api/v1/warranty`, the three
 `PATCH /api/v1/warranty/...` development endpoints, `GET /api/v1/escalations` and
-`PATCH /api/v1/escalations/{ticket_id}`.
+`PATCH /api/v1/escalations/{ticket_id}`. `GET /api/v1/escalations/mine` is the one endpoint
+under that prefix the agent may call, and it is customer-scoped rather than operator-only.
 
 On top of the key, every request made on behalf of a chat user carries `X-End-User-Id`, the id
 of whoever the chat frontend authenticated. The service links that subject to the first
@@ -130,17 +132,47 @@ customer it verifies or registers for them, in `identity_bindings`, and afterwar
 other customer with `403`. The error codes are `identity_required` (no header),
 `identity_not_verified` (no customer identified yet) and `identity_mismatch` (linked to another
 customer). Where the customer can be derived from that link it is never taken from the request
-body: `POST /api/v1/orders`, `POST /api/v1/warranty/claims` and `GET /api/v1/orders/mine` all
-work it out themselves. The root `README.md` has the full rationale.
+body: `POST /api/v1/orders`, `POST /api/v1/warranty/claims`, `GET /api/v1/orders/mine` and
+`GET /api/v1/escalations/mine` all work it out themselves. The root `README.md` has the full
+rationale.
 
 ## Ticket lifecycle
 
+Every ticket number the store issues is a row in `escalations`, whichever of the three ways it
+was born, so a number given to a customer always resolves to exactly one ticket:
+
+| `origin` | Issued when | Priority |
+|---|---|---|
+| `warranty_claim` | any claim is filed; the ticket reuses the number `POST /api/v1/warranty/claims` returns | `medium` |
+| `safety_risk` | the same, when the description matches a safety keyword; again the same number | `high` |
+| `agent_request` | the agent calls `POST /api/v1/escalations` | as requested |
+
+A claim keeps its own `claim_id` and its own row in `warranty_claims`, which holds what the
+claim is about; the ticket holds where it is in the queue. The two are joined by `ticket_id`,
+which is unique in both tables.
+
 `pending_agent -> in_progress -> resolved`, with `resolved -> in_progress` to reopen. Moving to
 `in_progress` needs an `assignee`; moving to `resolved` needs a `resolution_note`. A ticket
-whose `origin` is `safety_risk` -- the ones the warranty domain raises by itself when a claim
-describes a safety hazard -- cannot go from `pending_agent` straight to `resolved`; it returns
-`409 human_review_required` until somebody has taken it. Tickets raised by `escalate_to_human`
-have `origin` `agent_request` and can be closed in one step.
+whose `origin` is `safety_risk` cannot go from `pending_agent` straight to `resolved`; it
+returns `409 human_review_required` until somebody has taken it. The other two origins can be
+closed in one step.
+
+### Reading a ticket back
+
+`GET /api/v1/escalations/mine` returns the tickets of the customer the caller is bound to, and
+takes no ticket number: a number belonging to somebody else is absent from the answer rather
+than refused, so the endpoint cannot be used to probe whether one exists. It returns the ticket
+number, `origin`, `status`, a `topic`, the timestamps and `related_ticket_id`. For a claim the
+topic is the customer's own description of the fault; for a hand-over it is the reason the
+agent gave for escalating, which is a paraphrase rather than the customer's words. It deliberately withholds `assignee`, `resolution_note` and `priority`:
+those are written for the operations console, and an internal closing note or a member of
+staff's name has no business being read out in a chat window.
+
+`POST /api/v1/escalations` accepts an optional `related_ticket_id`, so a hand-over to a person
+about a case that already has a ticket is stored as that ticket's follow-up instead of as a
+second unrelated number. The link is best-effort: a number that is not one of this customer's
+own tickets is dropped rather than refused, because a wrong number must never block a request
+for a human, and the response echoes `related_ticket_id` so a dropped link is visible.
 
 ## Running the tests
 

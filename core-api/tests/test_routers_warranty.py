@@ -181,9 +181,7 @@ def test_create_claim_with_risk_keyword_returns_escalated_true_and_creates_escal
     assert row == ("high", "pending_agent")
 
 
-def test_create_claim_with_neutral_description_does_not_create_an_escalation(
-    client, tmp_path
-):
+def test_create_claim_with_neutral_description_queues_a_routine_ticket(client, tmp_path):
     response = client.post(
         "/api/v1/warranty/claims",
         json={
@@ -200,10 +198,37 @@ def test_create_claim_with_neutral_description_does_not_create_an_escalation(
 
     connection = sqlite3.connect(tmp_path / "test.db")
     row = connection.execute(
-        "SELECT 1 FROM escalations WHERE ticket_id = ?", (body["ticket_id"],)
+        "SELECT origin, priority, status FROM escalations WHERE ticket_id = ?",
+        (body["ticket_id"],),
     ).fetchone()
     connection.close()
-    assert row is None
+    assert row == ("warranty_claim", "medium", "pending_agent")
+
+
+def test_create_claim_queues_the_ticket_under_the_number_returned_to_the_customer(
+    client, tmp_path
+):
+    response = client.post(
+        "/api/v1/warranty/claims",
+        json={
+            "order_id": "order-002",
+            "description": "el televisor no enciende",
+            "client_id": "1010101010",
+        },
+        headers=HEADERS,
+    )
+    ticket_id = response.json()["ticket_id"]
+
+    connection = sqlite3.connect(tmp_path / "test.db")
+    claim_ticket = connection.execute(
+        "SELECT ticket_id FROM warranty_claims WHERE ticket_id = ?", (ticket_id,)
+    ).fetchone()
+    queued_ticket = connection.execute(
+        "SELECT ticket_id FROM escalations WHERE ticket_id = ?", (ticket_id,)
+    ).fetchone()
+    connection.close()
+    assert claim_ticket == (ticket_id,)
+    assert queued_ticket == (ticket_id,)
 
 
 def test_create_claim_resolves_warranty_id_from_the_order(client, tmp_path):
