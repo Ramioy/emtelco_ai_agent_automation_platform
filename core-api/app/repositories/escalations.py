@@ -6,7 +6,7 @@ from app.schemas.escalations import AGENT_REQUEST, Escalation
 
 COLUMNS = (
     "ticket_id, session_id, client_id, reason, priority, status, created_at, "
-    "origin, assignee, resolution_note, updated_at"
+    "origin, assignee, resolution_note, updated_at, related_ticket_id"
 )
 
 
@@ -18,11 +18,13 @@ def create(
     reason: str,
     priority: str,
     origin: str = AGENT_REQUEST,
+    related_ticket_id: str | None = None,
 ) -> Escalation | None:
     connection.execute(
         "INSERT INTO escalations (ticket_id, session_id, client_id, reason, priority, status, "
-        "created_at, origin) VALUES (?, ?, ?, ?, ?, 'pending_agent', datetime('now'), ?)",
-        (ticket_id, session_id, client_id, reason, priority, origin),
+        "created_at, origin, related_ticket_id) "
+        "VALUES (?, ?, ?, ?, ?, 'pending_agent', datetime('now'), ?, ?)",
+        (ticket_id, session_id, client_id, reason, priority, origin, related_ticket_id),
     )
     connection.commit()
     return get(connection, ticket_id)
@@ -40,6 +42,15 @@ def get(connection: sqlite3.Connection, ticket_id: str) -> Escalation | None:
 def list_all(connection: sqlite3.Connection) -> list[Escalation]:
     rows = connection.execute(
         f"SELECT {COLUMNS} FROM escalations ORDER BY created_at DESC, ticket_id DESC"
+    ).fetchall()
+    return [_row_to_escalation(row) for row in rows]
+
+
+def list_by_client(connection: sqlite3.Connection, client_id: str) -> list[Escalation]:
+    rows = connection.execute(
+        f"SELECT {COLUMNS} FROM escalations WHERE client_id = ? "
+        "ORDER BY created_at DESC, ticket_id DESC",
+        (client_id,),
     ).fetchall()
     return [_row_to_escalation(row) for row in rows]
 
@@ -77,4 +88,5 @@ def _row_to_escalation(row) -> Escalation:
         assignee=row[8],
         resolution_note=row[9],
         updated_at=row[10],
+        related_ticket_id=row[11],
     )

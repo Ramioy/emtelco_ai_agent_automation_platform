@@ -13,7 +13,7 @@ real catalog, tracks orders, checks warranty coverage, files claims, and hands t
 to a human when it should. It speaks Colombian Spanish to the customer and never states a fact
 it did not get from a tool call.
 
-The agent is an [n8n](https://n8n.io) workflow that orchestrates an LLM and thirteen tools. Every
+The agent is an [n8n](https://n8n.io) workflow that orchestrates an LLM and fourteen tools. Every
 one of those tools is an HTTP call into a [FastAPI](https://fastapi.tiangolo.com) microservice
 that owns the catalog, the orders, the warranties and the memory. A chat frontend such as
 [LibreChat](https://www.librechat.ai) talks to the workflow over a single OpenAI-compatible
@@ -52,7 +52,7 @@ flowchart LR
         RW["Respond to Webhook<br/>(chat.completion shape)"]
         LLM["DeepSeek Chat Model"]
         MEM["Simple Memory<br/>fallback buffer, 10 turns"]
-        TOOLS["13 HTTP Request tools"]
+        TOOLS["14 HTTP Request tools"]
         WH --> DS --> AG --> RW
         LLM -. "model" .-> AG
         MEM -. "memory for single-message callers" .-> AG
@@ -81,7 +81,7 @@ be escalated automatically -- all of that is computed by the microservice and re
 n8n contributes exactly three things: it turns an HTTP request into an agent invocation, it
 resolves a session key, and it lets the LLM pick which tool to call.
 
-That split is what makes the system testable. The microservice has 304 unit tests and an OpenAPI
+That split is what makes the system testable. The microservice has 331 unit tests and an OpenAPI
 spec; the rules are asserted there, in Python, not inferred from a screenshot of a node graph.
 It also means the agent cannot quietly drift: if the LLM asks for something the store refuses,
 it gets a `4xx` with an explicit reason and has to tell the customer, instead of a node
@@ -107,10 +107,9 @@ Two more decisions worth calling out:
 ├── README.md                     # this file
 ├── docker-compose.yml            # the whole stack: microservice, n8n, LibreChat, console
 ├── .env.example                  # every variable, one of which you fill in
-├── CLAUDE.md                     # repository conventions
 ├── core-api/                     # FastAPI microservice (see core-api/README.md)
 │   ├── app/                      # routers, repositories, schemas, SQLite access
-│   ├── tests/                    # 304 pytest tests
+│   ├── tests/                    # 331 pytest tests
 │   └── Dockerfile
 ├── demo-console/                 # operations console for driving a demo
 │   ├── app/                      # server-rendered HTML, no build step
@@ -155,8 +154,8 @@ default, including every secret LibreChat needs. `.env` is gitignored, so your k
 docker compose up -d --build
 ```
 
-The first run takes a few minutes: it builds the microservice and the demo console, and pulls
-six images. There is no second repository to clone and nothing to click through, because the
+The first run takes around five minutes from an empty Docker cache: it builds the microservice
+and the demo console, and pulls about 10 GB of images. There is no second repository to clone and nothing to click through, because the
 stack provisions itself while it starts:
 
 - the microservice creates and seeds its SQLite database;
@@ -399,14 +398,32 @@ confirm that, which would be absurd.
 >
 > **Customer:** Si, confirmo.
 >
-> **Agent:** Listo, Camila. Radiqué el reclamo de garantía y quedó registrado con el número de
-> caso claim-509af0d6, con ticket ticket-6ac90d97.
+> **Agent:** Listo, Camila. Radiqué el reclamo de garantía del SoundWave ANC de Aurex del
+> pedido order-002. Tu número de ticket es ticket-c2acb140. Con ese número puedes consultar el
+> estado cuando quieras.
 >
 > **Customer:** Gracias, pero prefiero que me atienda una persona.
 >
-> **Agent:** Claro que sí, Camila. Ya te pasé con una persona: tu ticket de atención es
-> ticket-2aecbfc6 y un agente humano te atenderá en breve. El reclamo de garantía sigue
-> registrado con el número claim-509af0d6, así que no se pierde nada.
+> **Agent:** Listo, Camila. Dejé tu caso en manos de una persona: te queda el ticket
+> 6fad6660, como seguimiento del c2acb140, y está en cola de atención.
+
+The number the customer walks away with is readable afterwards, from any later conversation of
+theirs, and the two numbers one incident produced are one case rather than two: the claim is the
+main ticket and the hand-over is recorded as its follow-up.
+
+> **Customer:** Buenas, ¿cómo va mi ticket ticket-c2acb140?
+>
+> **Agent:** El ticket-c2acb140, sobre los audífonos que no encienden ni cargan, está en cola:
+> ya quedó registrado y está esperando a que una persona lo tome. El ticket-6fad6660 es el
+> seguimiento de ese mismo caso.
+
+Asked the same question from another chat user, the store answers that the number is not one of
+theirs, and never whether it exists at all:
+
+> **Customer:** Hola, mi cédula es 2020202020. Necesito saber cómo va el ticket ticket-c2acb140.
+>
+> **Agent:** Hola, Andrés. Revisé los tickets asociados a esta conversación y el número
+> ticket-c2acb140 no aparece entre ellos, así que no puedo consultar su estado desde aquí.
 
 There is a fourth path worth demonstrating that has no separate scenario: if the claim
 description mentions a safety risk (smoke, fire, sparks, an explosion), the **microservice**
@@ -501,8 +518,10 @@ and every support ticket, and the ones that change state for a demo, answer only
 makes the console's access distinguishable from a customer's: the agent has no tool for those
 endpoints, and its key would not open them if it did. A caller holding the operator key is
 outside the binding rule, which is why the console can read every customer and never gets bound
-to one. There is no agent tool that reads tickets at all, so no customer can reach another
-customer's tickets through the chat.
+to one. The agent's one ticket read, `get_my_tickets`, takes no ticket number at all: the
+customer is derived from the binding and only their own tickets come back, so a number
+belonging to somebody else is simply absent from the answer rather than refused by a check that
+could be forgotten -- and its absence says nothing about whether it exists.
 
 **What else is load-bearing, and is not this.** Two things hold the boundary up from outside
 the microservice, and both should be read as part of it:
@@ -552,8 +571,9 @@ model. See [Who the customer is, and what they may see](#who-the-customer-is-and
 | `update_delivery_address` | `PATCH /api/v1/orders/{order_id}/address` | Change a delivery address. Refused once the order is delivered or cancelled. |
 | `list_my_orders` | `GET /api/v1/orders/mine` | *derived.* Every order of this customer, for the one who does not remember the order number. Takes no parameters. |
 | `get_warranty_status` | `GET /api/v1/warranty/status` | Whether a product in an order has coverage and whether it is still valid. Distinguishes "never registered" from "expired". |
-| `file_warranty_claim` | `POST /api/v1/warranty/claims` | *derived.* File a claim and return a ticket number. Escalates safety cases automatically. |
-| `escalate_to_human` | `POST /api/v1/escalations` | Hand the conversation to a human agent and return a ticket number. |
+| `file_warranty_claim` | `POST /api/v1/warranty/claims` | *derived.* File a claim and return the ticket number it is queued under. Escalates safety cases automatically. |
+| `escalate_to_human` | `POST /api/v1/escalations` | Hand the conversation to a human agent and return a ticket number. When the case already has a ticket, the new one is recorded as its follow-up. |
+| `get_my_tickets` | `GET /api/v1/escalations/mine` | *derived.* Every ticket of this customer with its state, what it is about, and the ticket it follows up on. Takes no parameters, so it answers both "how is this number going" and "what do I have open". |
 
 The microservice exposes a few more endpoints the agent deliberately cannot reach: the ones that
 write state so you can put the seed data into any shape you want for a demo, the three that list
@@ -599,6 +619,9 @@ curl -s -X PATCH http://localhost:8000/api/v1/escalations/ticket-xxxxxxxx \
   -H "Content-Type: application/json" \
   -H "X-API-Key: local-demo-operator-key" \
   -d '{"status":"in_progress","assignee":"Laura Munoz"}'
+
+# The queue holds every warranty claim too, not only the escalations, so the ticket number the
+# agent gave the customer is always one of these rows.
 ```
 
 Two demo setups worth knowing: putting an order into `DELIVERED` and then asking the agent to
@@ -640,13 +663,15 @@ fields validity is computed from, and therefore the only ones needed to stage an
 has to report. It is meant to sit beside the chat while you record: change the state there, ask
 the agent again, and the answer follows.
 
-**The tickets panel** is the operator's side of every escalation. Each row shows who raised it,
-why, its priority, its current state and, once someone takes it, who is handling it and how it
-was closed. The column that matters is **Origen**, because the two kinds of ticket are handled
-differently:
+**The tickets panel** is the operator's side of every ticket the store issues, under the same
+numbers the agent reads out to customers. Each row shows who raised it, why, its priority, its
+current state and, once someone takes it, who is handling it and how it was closed; a row that
+is a follow-up also carries the number it came from, under its own. The column that matters is
+**Origen**, because the three kinds of ticket are handled differently:
 
 | Origen | Raised by | How it closes |
 |---|---|---|
+| `RECLAMO DE GARANTIA` | every warranty claim, queued under the number the customer was given | a human closes it with a note, in one click |
 | `PEDIDO DEL CLIENTE` | the agent calling `escalate_to_human`: the customer asked for a person, was frustrated, or the agent failed twice | a human closes it with a note, in one click |
 | `RIESGO DE SEGURIDAD` | the microservice itself, when a warranty claim describes smoke, fire, sparks or an explosion | somebody has to **take** it first; the store refuses to close it straight from the queue |
 
@@ -903,19 +928,25 @@ A short checklist for a screen recording of the three scenarios.
    order number; let the agent ask for the cedula, list the orders, then ask for `order-002`.
    Point out the status wording: no internal codes reach the customer.
 3. **Warranty and escalation.** New conversation. "Mis audifonos dejaron de funcionar y creo que
-   tienen garantia", cedula `1010101010`, order `order-002`. Confirm the claim, then ask for a
-   human. Two ticket numbers, and the agent keeps them straight.
+   tienen garantia", cedula `1010101010`, order `order-002`. Confirm the claim, note the ticket
+   number, then ask for a human. Two numbers, and the agent presents the second as the
+   follow-up of the first rather than as a separate case.
+   Then start a genuinely new conversation, identify again and ask "como va mi ticket
+   ticket-xxxxxxxx" with the number from the claim. The agent reads back its real state. Ask
+   from a different chat user and it answers that the number is not one of theirs.
 4. **The agent is reading live state, not a script.** Show `order-002` in the console as
    `DISPATCHED`, ask the agent where it is, then click `DELIVERED` in the console and ask again
    in a new conversation. The answer goes from "va en camino" to "ya fue entregado" with
    nothing touched but one button. Then click **Vencer ahora** on `warranty-001` and ask about
    the same headphones' warranty again: it goes from "vigente, 33 meses" to "registrada, pero
    ya vencio", which is the distinction the third scenario is built on.
-5. **The tickets panel, and the two kinds of ticket.** Scenario 3 has already produced one of
-   each: the request for a human (`PEDIDO DEL CLIENTE`, medium) and, if you filed a claim whose
-   description mentions smoke or fire, the one the microservice raised by itself
-   (`RIESGO DE SEGURIDAD`, high, tinted red). Close the ordinary one from the queue in one
-   click with a note. Then try the same on the safety one -- the panel does not even offer the
+5. **The tickets panel, and the three kinds of ticket.** Scenario 3 has already produced the
+   claim itself (`RECLAMO DE GARANTIA`, medium) and the request for a human
+   (`PEDIDO DEL CLIENTE`, medium, showing *seguimiento de* the claim's number underneath it);
+   if you filed a claim whose description mentions smoke or fire, there is also the one the
+   microservice raised by itself (`RIESGO DE SEGURIDAD`, high, tinted red). Every number the
+   agent gave out during the demo is one of these rows. Close an ordinary one from the queue in
+   one click with a note. Then try the same on the safety one -- the panel does not even offer the
    button, and a forced request comes back refused -- so take it with a name first, then close
    it. The point is that the lifecycle rule lives in the microservice: the panel is only showing
    it.

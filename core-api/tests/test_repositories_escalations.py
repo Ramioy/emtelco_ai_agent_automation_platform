@@ -122,3 +122,66 @@ def test_update_leaves_a_stored_assignee_alone_when_none_is_sent(connection):
         connection, "ticket-6", status="resolved", assignee=None, resolution_note="Listo"
     )
     assert updated.assignee == "Laura"
+
+
+def test_create_stores_the_ticket_the_follow_up_derives_from(connection):
+    escalation = escalations_repo.create(
+        connection,
+        ticket_id="ticket-follow-up",
+        session_id="session-1",
+        client_id="1010101010",
+        reason="Customer asked for a person about an open claim",
+        priority="medium",
+        related_ticket_id="ticket-claim",
+    )
+    assert escalation.related_ticket_id == "ticket-claim"
+    assert escalations_repo.get(connection, "ticket-follow-up").related_ticket_id == (
+        "ticket-claim"
+    )
+
+
+def test_create_leaves_the_related_ticket_empty_when_none_is_given(connection):
+    escalation = escalations_repo.create(
+        connection,
+        ticket_id="ticket-alone",
+        session_id="session-1",
+        client_id="1010101010",
+        reason="Customer asked for a person",
+        priority="medium",
+    )
+    assert escalation.related_ticket_id is None
+
+
+def test_list_by_client_returns_only_that_customers_tickets(connection):
+    for ticket_id, client_id in (
+        ("ticket-1", "1010101010"),
+        ("ticket-2", "2020202020"),
+        ("ticket-3", "1010101010"),
+    ):
+        escalations_repo.create(
+            connection,
+            ticket_id=ticket_id,
+            session_id="session-1",
+            client_id=client_id,
+            reason="reason",
+            priority="medium",
+        )
+    tickets = escalations_repo.list_by_client(connection, "1010101010")
+    assert {ticket.ticket_id for ticket in tickets} == {"ticket-1", "ticket-3"}
+
+
+def test_list_by_client_returns_an_empty_list_for_a_customer_with_no_tickets(connection):
+    assert escalations_repo.list_by_client(connection, "9999999999") == []
+
+
+def test_list_by_client_never_returns_a_ticket_with_no_customer_on_it(connection):
+    escalations_repo.create(
+        connection,
+        ticket_id="ticket-anon",
+        session_id="session-1",
+        client_id=None,
+        reason="Asked for a person before identifying",
+        priority="medium",
+    )
+    assert escalations_repo.list_by_client(connection, "1010101010") == []
+

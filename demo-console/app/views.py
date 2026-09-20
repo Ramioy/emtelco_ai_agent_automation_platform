@@ -35,15 +35,16 @@ REFUSAL_MESSAGES = {
     "not_found": "Ese ticket ya no existe.",
 }
 
-# The automatic safety escalation writes its reason in English, as all stored data is. The
-# operator reads Spanish, so the machine-written prefix is swapped here, at the edge.
-SAFETY_REASON_PREFIX = "Risky warranty claim description: "
-SAFETY_REASON_LABEL = "Reclamo de garantia con riesgo de seguridad: "
+# Stored reasons are English and repeat what the Origen badge says; the prefix goes at the edge.
+REASON_PREFIXES = (
+    "Safety risk reported in a warranty claim: ",
+    "Warranty claim: ",
+)
 
-# The two cases the panel has to tell apart at a glance: a routine request a human closes, and
-# the safety escalation the store raised by itself and that nobody may close without taking it.
+# The three ways a ticket is born; only the safety one may not be closed without being taken.
 TICKET_ORIGIN_LABELS = {
     "agent_request": ("slate", "PEDIDO DEL CLIENTE"),
+    "warranty_claim": ("blue", "RECLAMO DE GARANTIA"),
     "safety_risk": ("red", "RIESGO DE SEGURIDAD"),
 }
 
@@ -392,9 +393,18 @@ def _ticket_actions(ticket: dict) -> str:
 
 
 def _ticket_reason(reason: str) -> str:
-    if reason.startswith(SAFETY_REASON_PREFIX):
-        return SAFETY_REASON_LABEL + reason[len(SAFETY_REASON_PREFIX):].strip("'")
+    for prefix in REASON_PREFIXES:
+        if reason.startswith(prefix):
+            return reason[len(prefix):]
     return reason
+
+
+def _ticket_id_cell(ticket: dict, tag: str) -> str:
+    related = ticket.get("related_ticket_id")
+    link = (
+        f'<span class="brand">seguimiento de {escape(related)}</span>' if related else ""
+    )
+    return f'<td class="id">{escape(ticket["ticket_id"])}{tag}{link}</td>'
 
 
 def _ticket_row(ticket: dict, names: dict[str, str], touched: str | None) -> str:
@@ -412,7 +422,7 @@ def _ticket_row(ticket: dict, names: dict[str, str], touched: str | None) -> str
     tag = '<span class="tag">actualizado</span>' if ticket_id == touched else ""
     return (
         f'<tr class="{classes}">'
-        f'<td class="id">{escape(ticket_id)}{tag}</td>'
+        f"{_ticket_id_cell(ticket, tag)}"
         f"<td>{_ticket_client_cell(ticket, names)}</td>"
         f'<td><span class="badge {origin_tone}">{escape(origin_label)}</span></td>'
         f'<td class="reason">{escape(_ticket_reason(ticket["reason"]))}</td>'
@@ -428,18 +438,18 @@ def _tickets_section(tickets: list[dict], names: dict[str, str], touched: str | 
         rows = "".join(_ticket_row(ticket, names, touched) for ticket in tickets)
     else:
         rows = (
-            '<tr><td colspan="7" class="brand">Todavia no hay tickets. Pidele al agente '
-            "hablar con una persona, o radica un reclamo de garantia que mencione humo o "
-            "fuego.</td></tr>"
+            '<tr><td colspan="7" class="brand">Todavia no hay tickets. Radica un reclamo de '
+            "garantia o pidele al agente hablar con una persona.</td></tr>"
         )
     return (
         "<section>"
         "<h2>Tickets de soporte</h2>"
-        '<p class="hint">Los tickets nacen de dos sitios: el cliente pide hablar con una '
-        "persona, o el reclamo de garantia describe un riesgo de seguridad y la tienda lo "
-        "escala sola. La columna <strong>Origen</strong> los distingue. Un ticket normal se "
-        "cierra de una con su nota; uno de riesgo de seguridad tiene que tomarlo alguien "
-        'antes, y la tienda rechaza cerrarlo sin eso.</p>'
+        '<p class="hint">Aqui esta todo ticket que la tienda emite: todo reclamo de garantia, '
+        "y ademas el cliente pidiendo hablar con una persona. Si el reclamo describe un riesgo "
+        "de seguridad, la tienda lo marca sola. La columna <strong>Origen</strong> los "
+        "distingue. Un ticket normal se cierra de una con su nota; uno de riesgo de seguridad "
+        "tiene que tomarlo alguien antes, y la tienda rechaza cerrarlo sin eso. El numero que "
+        'el agente le dio al cliente es el mismo que aparece aqui.</p>'
         '<div class="card"><table><thead><tr>'
         "<th>Ticket</th><th>Cliente</th><th>Origen</th><th>Motivo</th><th>Prioridad</th>"
         "<th>Estado</th><th>Mover</th>"

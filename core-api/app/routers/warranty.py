@@ -21,10 +21,11 @@ from app.schemas.warranty import (
     WarrantySummary,
     WarrantyUpdateRequest,
 )
-from app.schemas.escalations import SAFETY_RISK
+from app.schemas.escalations import SAFETY_RISK, WARRANTY_CLAIM
 from app.schemas.warranty_claims import ClaimCreateRequest, ClaimCreateResponse
 
-ESCALATION_PRIORITY = "high"
+SAFETY_PRIORITY = "high"
+CLAIM_PRIORITY = "medium"
 
 router = APIRouter(
     prefix="/api/v1/warranty",
@@ -105,10 +106,7 @@ def create_warranty_claim(
     connection: sqlite3.Connection = Depends(get_db),
     subject: Subject = Depends(get_subject),
 ) -> ClaimCreateResponse:
-    """escalated is computed from risk keywords in the description; when true, this endpoint
-    also creates the escalations row itself -- defense in depth, so the safety case never
-    depends on the agent remembering a second tool call. The claimant is derived from the
-    trusted identity, and the order has to be theirs."""
+    """Every claim is queued under the ticket number it returns, so that number stays readable."""
     _authorize_order(connection, subject, payload.order_id)
     client_id = identity.resolve_client_id(connection, subject, payload.client_id)
     escalated = warranty_claims_repo.matches_risk_keyword(payload.description)
@@ -124,16 +122,21 @@ def create_warranty_claim(
     )
 
     if escalated:
-        reason = f"Risky warranty claim description: {payload.description!r}"
-        escalations_repo.create(
-            connection,
-            ticket_id=ticket_id,
-            session_id=session_id,
-            client_id=client_id,
-            reason=reason,
-            priority=ESCALATION_PRIORITY,
-            origin=SAFETY_RISK,
-        )
+        reason = f"Safety risk reported in a warranty claim: {payload.description}"
+        origin, priority = SAFETY_RISK, SAFETY_PRIORITY
+    else:
+        reason = f"Warranty claim: {payload.description}"
+        origin, priority = WARRANTY_CLAIM, CLAIM_PRIORITY
+
+    escalations_repo.create(
+        connection,
+        ticket_id=ticket_id,
+        session_id=session_id,
+        client_id=client_id,
+        reason=reason,
+        priority=priority,
+        origin=origin,
+    )
 
     return ClaimCreateResponse(
         claim_id=claim.claim_id,

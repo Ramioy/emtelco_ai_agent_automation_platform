@@ -270,3 +270,265 @@ def test_the_agent_key_cannot_move_a_ticket(client):
     )
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "operator_only"
+
+
+# --- reading tickets back -----------------------------------------------------------------
+
+CAMILA = "1010101010"
+CAMILA_ORDER = "order-002"
+ANDRES = "2020202020"
+ANDRES_ORDER = "order-005"
+ANDRES_HEADERS = {"X-API-Key": API_KEY, "X-End-User-Id": "end-user-2"}
+
+
+def identify(client, headers, client_id):
+    response = client.get(f"/api/v1/clients/{client_id}", headers=headers)
+    assert response.status_code == 200
+
+
+def file_claim(client, headers, order_id, description):
+    response = client.post(
+        "/api/v1/warranty/claims",
+        json={"order_id": order_id, "description": description},
+        headers=headers,
+    )
+    assert response.status_code == 201
+    return response.json()["ticket_id"]
+
+
+def test_my_tickets_requires_an_api_key(client):
+    assert client.get("/api/v1/escalations/mine").status_code == 401
+
+
+def test_my_tickets_is_refused_before_the_customer_has_identified(client):
+    response = client.get("/api/v1/escalations/mine", headers=HEADERS)
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "identity_not_verified"
+
+
+def test_my_tickets_is_refused_without_the_identity_header(client):
+    response = client.get("/api/v1/escalations/mine", headers={"X-API-Key": API_KEY})
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "identity_required"
+
+
+def test_my_tickets_is_empty_for_a_customer_who_has_raised_none(client):
+    identify(client, HEADERS, CAMILA)
+    response = client.get("/api/v1/escalations/mine", headers=HEADERS)
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_a_warranty_claim_ticket_is_readable_by_the_number_given_to_the_customer(client):
+    identify(client, HEADERS, CAMILA)
+    ticket_id = file_claim(client, HEADERS, CAMILA_ORDER, "el televisor no enciende")
+
+    tickets = client.get("/api/v1/escalations/mine", headers=HEADERS).json()
+    ticket = next(item for item in tickets if item["ticket_id"] == ticket_id)
+    assert ticket["origin"] == "warranty_claim"
+    assert ticket["status"] == "pending_agent"
+    assert ticket["topic"] == "el televisor no enciende"
+    assert ticket["related_ticket_id"] is None
+
+
+def test_a_ticket_raised_by_asking_for_a_person_is_readable_too(client):
+    identify(client, HEADERS, CAMILA)
+    created = client.post(
+        "/api/v1/escalations",
+        json={
+            "session_id": "session-x",
+            "reason": "El cliente pidio hablar con una persona",
+            "priority": "medium",
+        },
+        headers=HEADERS,
+    ).json()
+
+    tickets = client.get("/api/v1/escalations/mine", headers=HEADERS).json()
+    ticket = next(item for item in tickets if item["ticket_id"] == created["ticket_id"])
+    assert ticket["origin"] == "agent_request"
+    assert ticket["topic"] == "El cliente pidio hablar con una persona"
+
+
+def test_my_tickets_never_returns_another_customers_ticket(client):
+    identify(client, HEADERS, CAMILA)
+    camila_ticket = file_claim(client, HEADERS, CAMILA_ORDER, "el televisor no enciende")
+    identify(client, ANDRES_HEADERS, ANDRES)
+    andres_ticket = file_claim(client, ANDRES_HEADERS, ANDRES_ORDER, "el equipo llego rayado")
+
+    tickets = client.get("/api/v1/escalations/mine", headers=ANDRES_HEADERS).json()
+    ticket_ids = {item["ticket_id"] for item in tickets}
+    assert andres_ticket in ticket_ids
+    assert camila_ticket not in ticket_ids
+
+
+def test_my_tickets_withholds_the_assignee_the_note_and_the_priority(client):
+    identify(client, HEADERS, CAMILA)
+    ticket_id = file_claim(client, HEADERS, CAMILA_ORDER, "el televisor no enciende")
+    client.patch(
+        f"/api/v1/escalations/{ticket_id}",
+        json={"status": "in_progress", "assignee": "Laura Restrepo"},
+        headers=OPERATOR_HEADERS,
+    )
+
+    tickets = client.get("/api/v1/escalations/mine", headers=HEADERS).json()
+    ticket = next(item for item in tickets if item["ticket_id"] == ticket_id)
+    assert ticket["status"] == "in_progress"
+    assert set(ticket) == {
+        "ticket_id",
+        "origin",
+        "status",
+        "topic",
+        "created_at",
+        "updated_at",
+        "related_ticket_id",
+    }
+
+
+def test_my_tickets_shows_the_state_the_operations_console_left_the_ticket_in(client):
+    identify(client, HEADERS, CAMILA)
+    ticket_id = file_claim(client, HEADERS, CAMILA_ORDER, "el televisor no enciende")
+    client.patch(
+        f"/api/v1/escalations/{ticket_id}",
+        json={"status": "resolved", "resolution_note": "Cambio de unidad autorizado"},
+        headers=OPERATOR_HEADERS,
+    )
+
+    tickets = client.get("/api/v1/escalations/mine", headers=HEADERS).json()
+    ticket = next(item for item in tickets if item["ticket_id"] == ticket_id)
+    assert ticket["status"] == "resolved"
+
+
+# --- linking the follow-up to the ticket it came from -------------------------------------
+
+
+def test_escalating_about_an_existing_ticket_records_it_as_the_follow_up(client):
+    identify(client, HEADERS, CAMILA)
+    claim_ticket = file_claim(client, HEADERS, CAMILA_ORDER, "el televisor no enciende")
+    follow_up = client.post(
+        "/api/v1/escalations",
+        json={
+            "session_id": "session-x",
+            "reason": "El cliente quiere hablar con una persona sobre su reclamo",
+            "priority": "medium",
+            "related_ticket_id": claim_ticket,
+        },
+        headers=HEADERS,
+    )
+    assert follow_up.status_code == 201
+
+    tickets = client.get("/api/v1/escalations/mine", headers=HEADERS).json()
+    ticket = next(
+        item for item in tickets if item["ticket_id"] == follow_up.json()["ticket_id"]
+    )
+    assert ticket["related_ticket_id"] == claim_ticket
+
+
+def test_an_empty_related_ticket_id_is_treated_as_none(client):
+    identify(client, HEADERS, CAMILA)
+    response = client.post(
+        "/api/v1/escalations",
+        json={
+            "session_id": "session-x",
+            "reason": "El cliente pidio hablar con una persona",
+            "priority": "medium",
+            "related_ticket_id": "   ",
+        },
+        headers=HEADERS,
+    )
+    assert response.status_code == 201
+    tickets = client.get("/api/v1/escalations/mine", headers=HEADERS).json()
+    ticket = next(
+        item for item in tickets if item["ticket_id"] == response.json()["ticket_id"]
+    )
+    assert ticket["related_ticket_id"] is None
+
+
+def test_the_response_says_which_ticket_the_follow_up_was_attached_to(client):
+    identify(client, HEADERS, CAMILA)
+    claim_ticket = file_claim(client, HEADERS, CAMILA_ORDER, "el televisor no enciende")
+    body = client.post(
+        "/api/v1/escalations",
+        json={
+            "session_id": "session-x",
+            "reason": "reason",
+            "priority": "medium",
+            "related_ticket_id": claim_ticket,
+        },
+        headers=HEADERS,
+    ).json()
+    assert body["related_ticket_id"] == claim_ticket
+
+
+def test_an_unknown_ticket_number_drops_the_link_without_blocking_the_escalation(client):
+    identify(client, HEADERS, CAMILA)
+    response = client.post(
+        "/api/v1/escalations",
+        json={
+            "session_id": "session-x",
+            "reason": "reason",
+            "priority": "medium",
+            "related_ticket_id": "ticket-does-not-exist",
+        },
+        headers=HEADERS,
+    )
+    assert response.status_code == 201
+    assert response.json()["related_ticket_id"] is None
+
+
+def test_a_follow_up_cannot_be_hung_off_another_customers_ticket(client):
+    identify(client, HEADERS, CAMILA)
+    camila_ticket = file_claim(client, HEADERS, CAMILA_ORDER, "el televisor no enciende")
+    identify(client, ANDRES_HEADERS, ANDRES)
+
+    response = client.post(
+        "/api/v1/escalations",
+        json={
+            "session_id": "session-y",
+            "reason": "reason",
+            "priority": "medium",
+            "related_ticket_id": camila_ticket,
+        },
+        headers=ANDRES_HEADERS,
+    )
+    assert response.status_code == 201
+    assert response.json()["related_ticket_id"] is None
+
+    listed = client.get("/api/v1/escalations", headers=OPERATOR_HEADERS).json()
+    by_id = {item["ticket_id"]: item for item in listed}
+    assert by_id[response.json()["ticket_id"]]["related_ticket_id"] is None
+
+
+def test_a_follow_up_raised_before_identifying_carries_no_link(client):
+    response = client.post(
+        "/api/v1/escalations",
+        json={
+            "session_id": "session-z",
+            "reason": "Quiero hablar con alguien",
+            "priority": "medium",
+            "related_ticket_id": "ticket-whatever",
+        },
+        headers=HEADERS,
+    )
+    assert response.status_code == 201
+    assert response.json()["related_ticket_id"] is None
+
+
+def test_the_operations_list_carries_the_link_between_the_two_numbers(client):
+    identify(client, HEADERS, CAMILA)
+    claim_ticket = file_claim(client, HEADERS, CAMILA_ORDER, "el televisor no enciende")
+    follow_up = client.post(
+        "/api/v1/escalations",
+        json={
+            "session_id": "session-x",
+            "reason": "El cliente quiere hablar con una persona",
+            "priority": "medium",
+            "related_ticket_id": claim_ticket,
+        },
+        headers=HEADERS,
+    ).json()
+
+    listed = client.get("/api/v1/escalations", headers=OPERATOR_HEADERS).json()
+    by_id = {item["ticket_id"]: item for item in listed}
+    assert by_id[follow_up["ticket_id"]]["related_ticket_id"] == claim_ticket
+    assert by_id[claim_ticket]["origin"] == "warranty_claim"
+
