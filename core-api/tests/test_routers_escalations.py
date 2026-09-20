@@ -8,12 +8,15 @@ from app.db import get_db, init_db
 from app.main import app
 
 API_KEY = "test-key"
-HEADERS = {"X-API-Key": API_KEY}
+OPERATOR_KEY = "test-operator-key"
+HEADERS = {"X-API-Key": API_KEY, "X-End-User-Id": "end-user-1"}
+OPERATOR_HEADERS = {"X-API-Key": OPERATOR_KEY}
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("TOOLS_API_KEY", API_KEY)
+    monkeypatch.setenv("OPERATOR_API_KEY", OPERATOR_KEY)
     connection = init_db(tmp_path / "test.db")
 
     def override_get_db():
@@ -89,3 +92,181 @@ def test_create_escalation_leaves_client_id_null_when_session_not_identified(cli
     ).fetchone()
     connection.close()
     assert row == (None,)
+
+
+def _open_ticket(client, reason="Customer asked for a person", priority="medium") -> str:
+    response = client.post(
+        "/api/v1/escalations",
+        json={"session_id": "session-x", "reason": reason, "priority": priority},
+        headers=HEADERS,
+    )
+    return response.json()["ticket_id"]
+
+
+def _safety_ticket(client) -> str:
+    """Raised the way the store raises it: a claim whose wording is a safety risk."""
+    client.get("/api/v1/clients/1010101010", headers=HEADERS)
+    client.post(
+        "/api/v1/warranty/claims",
+        json={"order_id": "order-001", "description": "el cargador echo humo y chispas"},
+        headers=HEADERS,
+    )
+    tickets = client.get("/api/v1/escalations", headers=OPERATOR_HEADERS).json()
+    return next(ticket["ticket_id"] for ticket in tickets if ticket["origin"] == "safety_risk")
+
+
+def test_list_returns_every_ticket_with_its_origin_and_priority(client):
+    _open_ticket(client)
+    _safety_ticket(client)
+    tickets = client.get("/api/v1/escalations", headers=OPERATOR_HEADERS).json()
+    origins = {ticket["origin"] for ticket in tickets}
+    assert origins == {"agent_request", "safety_risk"}
+    assert all(ticket["status"] == "pending_agent" for ticket in tickets)
+
+
+def test_list_is_reserved_for_the_operator_key(client):
+    assert client.get("/api/v1/escalations", headers=HEADERS).status_code == 403
+    assert client.get("/api/v1/escalations").status_code == 401
+
+
+def test_an_agent_request_ticket_can_be_closed_straight_away_with_a_note(client):
+    ticket_id = _open_ticket(client)
+    response = client.patch(
+        f"/api/v1/escalations/{ticket_id}",
+        json={"status": "resolved", "assignee": "Laura", "resolution_note": "Se llamo"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "resolved"
+    assert body["assignee"] == "Laura"
+    assert body["resolution_note"] == "Se llamo"
+
+
+def test_closing_a_ticket_without_a_note_is_refused(client):
+    ticket_id = _open_ticket(client)
+    response = client.patch(
+        f"/api/v1/escalations/{ticket_id}",
+        json={"status": "resolved"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "resolution_note_required"
+
+
+def test_taking_a_ticket_without_a_name_is_refused(client):
+    ticket_id = _open_ticket(client)
+    response = client.patch(
+        f"/api/v1/escalations/{ticket_id}",
+        json={"status": "in_progress"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "assignee_required"
+
+
+def test_a_safety_ticket_cannot_be_closed_before_a_person_takes_it(client):
+    ticket_id = _safety_ticket(client)
+    response = client.patch(
+        f"/api/v1/escalations/{ticket_id}",
+        json={"status": "resolved", "resolution_note": "Cerrado"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "human_review_required"
+
+
+def test_a_safety_ticket_closes_once_it_has_been_taken_and_has_a_note(client):
+    ticket_id = _safety_ticket(client)
+    taken = client.patch(
+        f"/api/v1/escalations/{ticket_id}",
+        json={"status": "in_progress", "assignee": "Laura"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert taken.status_code == 200
+    assert taken.json()["status"] == "in_progress"
+
+    closed = client.patch(
+        f"/api/v1/escalations/{ticket_id}",
+        json={"status": "resolved", "resolution_note": "Recogida coordinada"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert closed.status_code == 200
+    assert closed.json()["status"] == "resolved"
+    assert closed.json()["assignee"] == "Laura"
+
+
+def test_a_safety_ticket_is_raised_with_high_priority(client):
+    ticket_id = _safety_ticket(client)
+    tickets = client.get("/api/v1/escalations", headers=OPERATOR_HEADERS).json()
+    ticket = next(item for item in tickets if item["ticket_id"] == ticket_id)
+    assert ticket["priority"] == "high"
+
+
+def test_a_resolved_ticket_can_be_reopened_but_not_resolved_again(client):
+    ticket_id = _open_ticket(client)
+    client.patch(
+        f"/api/v1/escalations/{ticket_id}",
+        json={"status": "resolved", "assignee": "Laura", "resolution_note": "Se llamo"},
+        headers=OPERATOR_HEADERS,
+    )
+    again = client.patch(
+        f"/api/v1/escalations/{ticket_id}",
+        json={"status": "resolved", "resolution_note": "otra vez"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert again.status_code == 409
+    assert again.json()["error"]["code"] == "invalid_transition"
+
+    reopened = client.patch(
+        f"/api/v1/escalations/{ticket_id}",
+        json={"status": "in_progress"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert reopened.status_code == 200
+    assert reopened.json()["status"] == "in_progress"
+
+
+def test_a_ticket_cannot_go_back_to_pending(client):
+    ticket_id = _open_ticket(client)
+    client.patch(
+        f"/api/v1/escalations/{ticket_id}",
+        json={"status": "in_progress", "assignee": "Laura"},
+        headers=OPERATOR_HEADERS,
+    )
+    response = client.patch(
+        f"/api/v1/escalations/{ticket_id}",
+        json={"status": "pending_agent"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert response.status_code == 409
+
+
+def test_an_unknown_status_is_rejected_before_any_lifecycle_rule(client):
+    ticket_id = _open_ticket(client)
+    response = client.patch(
+        f"/api/v1/escalations/{ticket_id}",
+        json={"status": "cerrado"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert response.status_code == 422
+
+
+def test_updating_an_unknown_ticket_returns_404(client):
+    response = client.patch(
+        "/api/v1/escalations/ticket-does-not-exist",
+        json={"status": "in_progress", "assignee": "Laura"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert response.status_code == 404
+
+
+def test_the_agent_key_cannot_move_a_ticket(client):
+    ticket_id = _open_ticket(client)
+    response = client.patch(
+        f"/api/v1/escalations/{ticket_id}",
+        json={"status": "in_progress", "assignee": "Laura"},
+        headers=HEADERS,
+    )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "operator_only"

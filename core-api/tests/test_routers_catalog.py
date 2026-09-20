@@ -1,9 +1,12 @@
 """Integration tests for the catalog router against the real FastAPI app."""
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.db import get_db, init_db
 from app.main import app
+from app.repositories.catalog import SEED_PATH
 
 API_KEY = "test-key"
 HEADERS = {"X-API-Key": API_KEY}
@@ -26,7 +29,8 @@ def client(tmp_path, monkeypatch):
 def test_get_products_without_filters_returns_all(client):
     response = client.get("/api/v1/catalog/products", headers=HEADERS)
     assert response.status_code == 200
-    assert len(response.json()) == 8
+    seeded_ids = {product["id"] for product in json.loads(SEED_PATH.read_text())}
+    assert {product["id"] for product in response.json()} == seeded_ids
 
 
 def test_get_products_filters_by_category_and_max_budget(client):
@@ -36,8 +40,13 @@ def test_get_products_filters_by_category_and_max_budget(client):
         headers=HEADERS,
     )
     assert response.status_code == 200
-    ids = {product["id"] for product in response.json()}
-    assert ids == {"laptop-001", "laptop-002"}
+    products = response.json()
+    assert all(
+        product["category"] == "laptop" and product["price"] <= 5000000 for product in products
+    )
+    ids = {product["id"] for product in products}
+    assert {"laptop-001", "laptop-002"} <= ids
+    assert "laptop-003" not in ids
 
 
 def test_get_products_requires_api_key(client):
@@ -53,7 +62,7 @@ def test_get_products_with_session_id_records_results_in_products_viewed(client)
     )
     assert response.status_code == 200
     queried_ids = {product["id"] for product in response.json()}
-    assert queried_ids == {"laptop-001", "laptop-002", "laptop-003"}
+    assert {"laptop-001", "laptop-002", "laptop-003"} <= queried_ids
 
     session = client.get("/api/v1/sessions/session-x", headers=HEADERS).json()
     assert set(session["products_viewed"]) == queried_ids
@@ -70,7 +79,7 @@ def test_get_products_without_session_id_does_not_touch_any_session(client):
 
 
 def test_get_products_with_session_id_does_not_duplicate_across_repeated_queries(client):
-    client.get(
+    first = client.get(
         "/api/v1/catalog/products",
         params={"category": "tablet", "session_id": "session-y"},
         headers=HEADERS,
@@ -80,8 +89,9 @@ def test_get_products_with_session_id_does_not_duplicate_across_repeated_queries
         params={"category": "tablet", "session_id": "session-y"},
         headers=HEADERS,
     )
+    queried_ids = [product["id"] for product in first.json()]
     session = client.get("/api/v1/sessions/session-y", headers=HEADERS).json()
-    assert session["products_viewed"] == ["tablet-001"]
+    assert session["products_viewed"] == queried_ids
 
 
 def test_get_products_with_session_id_and_no_matches_records_nothing(client):
@@ -127,3 +137,9 @@ def test_compare_with_fewer_than_two_ids_returns_422(client):
         headers=HEADERS,
     )
     assert response.status_code == 422
+
+
+def test_every_product_on_sale_carries_a_coverage_term(client):
+    products = client.get("/api/v1/catalog/products", headers=HEADERS).json()
+    assert products
+    assert all(product["warranty_months"] > 0 for product in products)

@@ -6,7 +6,8 @@
     "brand": "Zenda",
     "price": 3200000,
     "specs": {"ram_gb": 8, "storage_gb": 256, "cpu": "Intel i5", "gpu": "Integrated", "screen_inches": 14},
-    "stock": 10
+    "stock": 10,
+    "warranty_months": 24
   },
   {
     "id": "laptop-002",
@@ -15,7 +16,8 @@
     "brand": "Zenda",
     "price": 4800000,
     "specs": {"ram_gb": 16, "storage_gb": 512, "cpu": "AMD Ryzen 7", "gpu": "RTX 3050", "screen_inches": 15},
-    "stock": 5
+    "stock": 5,
+    "warranty_months": 24
   },
   {
     "id": "laptop-003",
@@ -24,7 +26,68 @@
     "brand": "Northgate",
     "price": 7200000,
     "specs": {"ram_gb": 32, "storage_gb": 1000, "cpu": "Intel i7", "gpu": "RTX 4060", "screen_inches": 16},
-    "stock": 3
+    "stock": 3,
+    "warranty_months": 36
+  },
+  {
+    "id": "laptop-004",
+    "category": "laptop",
+    "name": "EveryDay 14",
+    "brand": "Orbix",
+    "price": 1650000,
+    "specs": {"ram_gb": 8, "storage_gb": 256, "cpu": "Intel i3", "gpu": "Integrated", "screen_inches": 14},
+    "stock": 15,
+    "warranty_months": 12
+  },
+  {
+    "id": "laptop-005",
+    "category": "laptop",
+    "name": "WorkMate 15",
+    "brand": "Northgate",
+    "price": 2750000,
+    "specs": {"ram_gb": 16, "storage_gb": 256, "cpu": "AMD Ryzen 5", "gpu": "Integrated", "screen_inches": 15},
+    "stock": 9,
+    "warranty_months": 24
+  },
+  {
+    "id": "laptop-006",
+    "category": "laptop",
+    "name": "UltraBook Air 13 Lite",
+    "brand": "Zenda",
+    "price": 2950000,
+    "specs": {"ram_gb": 8, "storage_gb": 512, "cpu": "Intel i5", "gpu": "Integrated", "screen_inches": 13},
+    "stock": 11,
+    "warranty_months": 24
+  },
+  {
+    "id": "laptop-007",
+    "category": "laptop",
+    "name": "GameFrame 15",
+    "brand": "Velmora",
+    "price": 5600000,
+    "specs": {"ram_gb": 16, "storage_gb": 1000, "cpu": "Intel i7", "gpu": "RTX 4050", "screen_inches": 15},
+    "stock": 6,
+    "warranty_months": 24
+  },
+  {
+    "id": "laptop-008",
+    "category": "laptop",
+    "name": "StudioBook Air 16",
+    "brand": "Northgate",
+    "price": 6100000,
+    "specs": {"ram_gb": 32, "storage_gb": 512, "cpu": "Intel i7", "gpu": "RTX 3050", "screen_inches": 16},
+    "stock": 0,
+    "warranty_months": 36
+  },
+  {
+    "id": "laptop-009",
+    "category": "laptop",
+    "name": "GameFrame 17 Max",
+    "brand": "Velmora",
+    "price": 8900000,
+    "specs": {"ram_gb": 32, "storage_gb": 2000, "cpu": "AMD Ryzen 9", "gpu": "RTX 4070", "screen_inches": 17},
+    "stock": 2,
+    "warranty_months": 36
   },
   {
     "id": "smartphone-001",
@@ -33,7 +96,8 @@
     "brand": "Halox",
     "price": 2100000,
     "specs": {"ram_gb": 8, "storage_gb": 128, "screen_inches": 6.1, "camera_mp": 48},
-    "stock": 20
+    "stock": 20,
+    "warranty_months": 12
   },
   {
     "id": "smartphone-002",
@@ -42,7 +106,58 @@
     "brand": "Halox",
     "price": 3400000,
     "specs": {"ram_gb": 12, "storage_gb": 256, "screen_inches": 6.5, "camera_mp": 108},
-    "stock": 8
+    "stock": 8,
+    "warranty_months": 24
+  },
+  {
+    "id": "smartphone-003",
+    "category": "smartphone",
+    "name": "Pulse Lite",
+    "brand": "Orbix",
+    "price": 620000,
+    "specs": {"ram_gb": 4, "storage_gb": 64, "screen_inches": 6.2, "camera_mp": 13},
+    "stock": 30,
+    "warranty_months": 6
+  },
+  {
+    "id": "smartphone-004",
+    "category": "smartphone",
+    "name": "Pulse 5",
+    "brand": "Orbix",
+    "price": 980000,
+    "specs": {"ram_gb": 6, "storage_gb": 128, "screen_inches": 6.6, "camera_mp": 32},
+    "stock": 25,
+    "warranty_months": 12
+  },
+  {
+    "id": "smartphone-005",
+    "category": "smartphone",
+    "name": "Terra 5G",
+    "brand": "Velmora",
+    "price": 1450000,
+    "specs": {"ram_gb": 6, "storage_gb": 256, "screen_inches": 6.7, "camera_mp": 50},
+    "stock": 16,
+    "warranty_months": 12
+  },
+  {
+    "id": "smartphone-006",
+    "category": "smartphone",
+    "name": "Nova X13",
+    "brand": "Halox",
+    "price": 2650000,
+    "specs": {"ram_gb": 8, "storage_gb": 256, "screen_inches": 6.1, "camera_mp": 64},
+    "stock": 0,
+    "warranty_months": 12
+  },
+  {
+    "id": "smartphone-007",
+    "category": "smartphone",
+    "name": "Terra Max",
+    "brand": "Velmora",
+    "price": 4200000,
+    "specs": {"ram_gb": 12, "storage_gb": 512, "screen_inches": 6.8, "camera_mp": 64},
+    "stock": 4,
+    "warranty_months": 24
   },
   {
     "id": "tablet-001",
@@ -51,7 +166,48 @@
     "brand": "Northgate",
     "price": 1800000,
     "specs": {"ram_gb": 6, "storage_gb": 128, "screen_inches": 11},
-    "stock": 12
+    "stock": 12,
+    "warranty_months": 12
+  },
+  {
+    "id": "tablet-002",
+    "category": "tablet",
+    "name": "TabGo 8",
+    "brand": "Orbix",
+    "price": 720000,
+    "specs": {"ram_gb": 3, "storage_gb": 64, "screen_inches": 8},
+    "stock": 28,
+    "warranty_months": 6
+  },
+  {
+    "id": "tablet-003",
+    "category": "tablet",
+    "name": "TabGo 10",
+    "brand": "Orbix",
+    "price": 1050000,
+    "specs": {"ram_gb": 4, "storage_gb": 128, "screen_inches": 10.1},
+    "stock": 20,
+    "warranty_months": 12
+  },
+  {
+    "id": "tablet-004",
+    "category": "tablet",
+    "name": "TabPro 11 Max",
+    "brand": "Northgate",
+    "price": 2400000,
+    "specs": {"ram_gb": 8, "storage_gb": 256, "screen_inches": 11},
+    "stock": 7,
+    "warranty_months": 12
+  },
+  {
+    "id": "tablet-005",
+    "category": "tablet",
+    "name": "Canvas 12",
+    "brand": "Velmora",
+    "price": 3150000,
+    "specs": {"ram_gb": 8, "storage_gb": 512, "screen_inches": 12.9},
+    "stock": 5,
+    "warranty_months": 24
   },
   {
     "id": "headphones-001",
@@ -60,7 +216,8 @@
     "brand": "Aurex",
     "price": 650000,
     "specs": {"type": "over-ear", "noise_cancelling": true, "battery_hours": 30},
-    "stock": 25
+    "stock": 25,
+    "warranty_months": 36
   },
   {
     "id": "headphones-002",
@@ -69,6 +226,57 @@
     "brand": "Aurex",
     "price": 380000,
     "specs": {"type": "in-ear", "noise_cancelling": false, "battery_hours": 20},
-    "stock": 0
+    "stock": 0,
+    "warranty_months": 12
+  },
+  {
+    "id": "headphones-003",
+    "category": "headphones",
+    "name": "PulseBuds Mini",
+    "brand": "Orbix",
+    "price": 190000,
+    "specs": {"type": "in-ear", "noise_cancelling": false, "battery_hours": 8},
+    "stock": 40,
+    "warranty_months": 6
+  },
+  {
+    "id": "headphones-004",
+    "category": "headphones",
+    "name": "ClipOn Go",
+    "brand": "Velmora",
+    "price": 240000,
+    "specs": {"type": "on-ear", "noise_cancelling": false, "battery_hours": 14},
+    "stock": 22,
+    "warranty_months": 6
+  },
+  {
+    "id": "headphones-005",
+    "category": "headphones",
+    "name": "PulseBuds ANC",
+    "brand": "Orbix",
+    "price": 290000,
+    "specs": {"type": "in-ear", "noise_cancelling": true, "battery_hours": 6},
+    "stock": 18,
+    "warranty_months": 12
+  },
+  {
+    "id": "headphones-006",
+    "category": "headphones",
+    "name": "StageOne",
+    "brand": "Velmora",
+    "price": 520000,
+    "specs": {"type": "on-ear", "noise_cancelling": false, "battery_hours": 45},
+    "stock": 14,
+    "warranty_months": 12
+  },
+  {
+    "id": "headphones-007",
+    "category": "headphones",
+    "name": "SoundWave Studio",
+    "brand": "Aurex",
+    "price": 1150000,
+    "specs": {"type": "over-ear", "noise_cancelling": true, "battery_hours": 40},
+    "stock": 4,
+    "warranty_months": 24
   }
 ]

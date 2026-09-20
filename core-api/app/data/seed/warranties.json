@@ -12,5 +12,26 @@
     "product_id": "tablet-001",
     "coverage_months": 12,
     "purchase_date": "2023-01-01"
+  },
+  {
+    "warranty_id": "warranty-003",
+    "order_id": "order-004",
+    "product_id": "smartphone-002",
+    "coverage_months": 24,
+    "purchase_date": "2026-06-10"
+  },
+  {
+    "warranty_id": "warranty-004",
+    "order_id": "order-005",
+    "product_id": "smartphone-001",
+    "coverage_months": 12,
+    "purchase_date": "2026-09-05"
+  },
+  {
+    "warranty_id": "warranty-005",
+    "order_id": "order-006",
+    "product_id": "laptop-001",
+    "coverage_months": 24,
+    "purchase_date": "2026-09-01"
   }
 ]

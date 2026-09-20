@@ -34,18 +34,27 @@ def test_list_products_with_no_filters_returns_all(connection):
 
 def test_list_products_filters_by_category(connection):
     products = catalog_repo.list_products(connection, category="laptop")
-    assert len(products) == 3
     assert all(product.category == "laptop" for product in products)
+    assert {"laptop-001", "laptop-002", "laptop-003"} <= {product.id for product in products}
+    assert len(products) < len(catalog_repo.list_products(connection))
 
 
 def test_list_products_filters_by_max_budget(connection):
     products = catalog_repo.list_products(connection, max_budget=2000000)
-    assert {product.id for product in products} == {"tablet-001", "headphones-001", "headphones-002"}
+    ids = {product.id for product in products}
+    assert all(product.price <= 2000000 for product in products)
+    assert {"tablet-001", "headphones-001", "headphones-002"} <= ids
+    assert "laptop-003" not in ids
 
 
 def test_list_products_filters_by_category_and_max_budget(connection):
     products = catalog_repo.list_products(connection, category="laptop", max_budget=5000000)
-    assert {product.id for product in products} == {"laptop-001", "laptop-002"}
+    ids = {product.id for product in products}
+    assert all(
+        product.category == "laptop" and product.price <= 5000000 for product in products
+    )
+    assert {"laptop-001", "laptop-002"} <= ids
+    assert "laptop-003" not in ids
 
 
 def test_list_products_unknown_category_returns_empty(connection):
@@ -54,9 +63,8 @@ def test_list_products_unknown_category_returns_empty(connection):
 
 def test_list_products_returns_parsed_specs_and_fields(connection):
     products = catalog_repo.list_products(connection, category="tablet")
-    assert len(products) == 1
-    product = products[0]
-    assert product.id == "tablet-001"
+    product = next(item for item in products if item.id == "tablet-001")
+    assert product.category == "tablet"
     assert product.name == "TabPro 11"
     assert product.brand == "Northgate"
     assert product.price == 1800000
@@ -76,11 +84,11 @@ def test_get_by_ids_with_empty_list_returns_empty(connection):
 def test_compute_key_differences_flags_differing_top_level_and_spec_fields():
     product_a = Product(
         id="a", category="laptop", name="A", brand="Zenda",
-        price=100, specs={"ram_gb": 8, "cpu": "i5"}, stock=1,
+        price=100, specs={"ram_gb": 8, "cpu": "i5"}, stock=1, warranty_months=24,
     )
     product_b = Product(
         id="b", category="laptop", name="B", brand="Zenda",
-        price=200, specs={"ram_gb": 8, "cpu": "i7"}, stock=1,
+        price=200, specs={"ram_gb": 8, "cpu": "i7"}, stock=1, warranty_months=24,
     )
 
     differences = catalog_repo.compute_key_differences([product_a, product_b])
@@ -89,28 +97,35 @@ def test_compute_key_differences_flags_differing_top_level_and_spec_fields():
     assert "brand" not in differences
     assert "category" not in differences
     assert "stock" not in differences
+    assert "warranty_months" not in differences
     assert "specs.ram_gb" not in differences
 
 
 def test_compute_key_differences_flags_specs_present_in_only_one_product():
     product_a = Product(
         id="a", category="laptop", name="A", brand="Zenda",
-        price=100, specs={"gpu": "RTX 3050"}, stock=1,
+        price=100, specs={"gpu": "RTX 3050"}, stock=1, warranty_months=24,
     )
     product_b = Product(
         id="b", category="smartphone", name="B", brand="Halox",
-        price=100, specs={"camera_mp": 48}, stock=1,
+        price=100, specs={"camera_mp": 48}, stock=1, warranty_months=12,
     )
 
     differences = catalog_repo.compute_key_differences([product_a, product_b])
 
-    assert set(differences) == {"category", "brand", "specs.gpu", "specs.camera_mp"}
+    assert set(differences) == {
+        "category",
+        "brand",
+        "warranty_months",
+        "specs.gpu",
+        "specs.camera_mp",
+    }
 
 
 def test_compute_key_differences_over_identical_products_is_empty():
     product = Product(
         id="a", category="laptop", name="A", brand="Zenda",
-        price=100, specs={"ram_gb": 8}, stock=1,
+        price=100, specs={"ram_gb": 8}, stock=1, warranty_months=24,
     )
     identical_copy = product.model_copy(update={"id": "b"})
 

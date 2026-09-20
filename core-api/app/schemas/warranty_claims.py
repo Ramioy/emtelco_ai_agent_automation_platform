@@ -15,7 +15,8 @@ class WarrantyClaim(BaseModel):
 class ClaimCreateRequest(BaseModel):
     order_id: str
     description: str
-    client_id: str
+    # Same rule as OrderCreateRequest: derived from the trusted identity when isolation is on.
+    client_id: str | None = None
 
 
 class ClaimCreateResponse(BaseModel):

@@ -4,7 +4,8 @@ import sqlite3
 import uuid
 from pathlib import Path
 
-from app.schemas.orders import Order
+from app.repositories import catalog as catalog_repo
+from app.schemas.orders import Order, OrderProduct
 
 SEED_PATH = Path(__file__).parent.parent / "data" / "seed" / "orders.json"
 
@@ -42,7 +43,15 @@ def get(connection: sqlite3.Connection, order_id: str) -> Order | None:
     ).fetchone()
     if row is None:
         return None
-    return _row_to_order(row)
+    return _row_to_order(connection, row)
+
+
+def list_all(connection: sqlite3.Connection) -> list[Order]:
+    rows = connection.execute(
+        "SELECT order_id, client_id, status, estimated_delivery_date, delivery_address, "
+        "products FROM orders ORDER BY order_id"
+    ).fetchall()
+    return [_row_to_order(connection, row) for row in rows]
 
 
 def list_by_client(connection: sqlite3.Connection, client_id: str) -> list[Order]:
@@ -51,7 +60,7 @@ def list_by_client(connection: sqlite3.Connection, client_id: str) -> list[Order
         "products FROM orders WHERE client_id = ?",
         (client_id,),
     ).fetchall()
-    return [_row_to_order(row) for row in rows]
+    return [_row_to_order(connection, row) for row in rows]
 
 
 def create(
@@ -90,12 +99,39 @@ def update_status(connection: sqlite3.Connection, order_id: str, new_status: str
     return get(connection, order_id)
 
 
-def _row_to_order(row) -> Order:
+def resolve_product_details(
+    connection: sqlite3.Connection, product_ids: list[str]
+) -> list[OrderProduct]:
+    """Ids an order references but the catalog no longer has still get an entry, with the
+    commercial fields left null, so the order never silently loses a line."""
+    if not product_ids:
+        return []
+    found = {product.id: product for product in catalog_repo.get_by_ids(connection, product_ids)}
+    details = []
+    for product_id in product_ids:
+        product = found.get(product_id)
+        if product is None:
+            details.append(OrderProduct(product_id=product_id))
+        else:
+            details.append(
+                OrderProduct(
+                    product_id=product.id,
+                    name=product.name,
+                    brand=product.brand,
+                    price=product.price,
+                )
+            )
+    return details
+
+
+def _row_to_order(connection: sqlite3.Connection, row) -> Order:
+    products = json.loads(row[5])
     return Order(
         order_id=row[0],
         client_id=row[1],
         status=row[2],
         estimated_delivery_date=row[3],
         delivery_address=row[4],
-        products=json.loads(row[5]),
+        products=products,
+        product_details=resolve_product_details(connection, products),
     )

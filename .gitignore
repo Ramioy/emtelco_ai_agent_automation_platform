@@ -16,10 +16,7 @@ htmlcov/
 !.env.example
 
 # Runtime data
-core-api/app/data/mock.db
-core-api/app/data/mock.db-wal
-core-api/app/data/mock.db-shm
-n8n-instance/data/
+core-api/app/data/db/
 
 # Logs
 *.log

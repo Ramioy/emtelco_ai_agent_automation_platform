@@ -6,7 +6,9 @@ from app.db import get_db, init_db
 from app.main import app
 
 API_KEY = "test-key"
-HEADERS = {"X-API-Key": API_KEY}
+OPERATOR_KEY = "test-operator-key"
+HEADERS = {"X-API-Key": API_KEY, "X-End-User-Id": "end-user-1"}
+OPERATOR_HEADERS = {"X-API-Key": OPERATOR_KEY}
 VALID_PAYLOAD = {
     "client_id": "1234567",
     "full_name": "Juan Perez",
@@ -18,6 +20,7 @@ VALID_PAYLOAD = {
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("TOOLS_API_KEY", API_KEY)
+    monkeypatch.setenv("OPERATOR_API_KEY", OPERATOR_KEY)
     connection = init_db(tmp_path / "test.db")
 
     def override_get_db():
@@ -133,7 +136,7 @@ def test_history_endpoint_lists_current_memory_and_past_sessions(client):
 
 
 def test_history_endpoint_for_unknown_client_has_no_memory_and_no_sessions(client):
-    response = client.get("/api/v1/clients/9999999/history", headers=HEADERS)
+    response = client.get("/api/v1/clients/9999999/history", headers=OPERATOR_HEADERS)
     assert response.status_code == 200
     body = response.json()
     assert body["current_memory"] is None

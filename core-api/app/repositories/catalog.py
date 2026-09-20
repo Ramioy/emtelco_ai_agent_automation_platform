@@ -16,8 +16,8 @@ def seed(connection: sqlite3.Connection) -> None:
         return
     products = json.loads(SEED_PATH.read_text())
     connection.executemany(
-        "INSERT INTO products (id, category, name, brand, price, specs, stock) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO products (id, category, name, brand, price, specs, stock, "
+        "warranty_months) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 product["id"],
@@ -27,6 +27,7 @@ def seed(connection: sqlite3.Connection) -> None:
                 product["price"],
                 json.dumps(product["specs"]),
                 product["stock"],
+                product["warranty_months"],
             )
             for product in products
         ],
@@ -48,7 +49,7 @@ def list_products(
         clauses.append("price <= ?")
         params.append(max_budget)
 
-    query = "SELECT id, category, name, brand, price, specs, stock FROM products"
+    query = "SELECT id, category, name, brand, price, specs, stock, warranty_months FROM products"
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
     rows = connection.execute(query, params).fetchall()
@@ -58,8 +59,8 @@ def list_products(
 def get_by_ids(connection: sqlite3.Connection, ids: list[str]) -> list[Product]:
     placeholders = ",".join("?" for _ in ids)
     rows = connection.execute(
-        "SELECT id, category, name, brand, price, specs, stock FROM products "
-        f"WHERE id IN ({placeholders})",
+        "SELECT id, category, name, brand, price, specs, stock, warranty_months "
+        f"FROM products WHERE id IN ({placeholders})",
         ids,
     ).fetchall()
     return [_row_to_product(row) for row in rows]
@@ -74,7 +75,7 @@ def decrement_stock(connection: sqlite3.Connection, product_id: str) -> None:
 
 def compute_key_differences(products: list[Product]) -> list[str]:
     differences = []
-    for field in ("category", "brand", "price", "stock"):
+    for field in ("category", "brand", "price", "stock", "warranty_months"):
         values = {getattr(product, field) for product in products}
         if len(values) > 1:
             differences.append(field)
@@ -99,4 +100,5 @@ def _row_to_product(row) -> Product:
         price=row[4],
         specs=json.loads(row[5]),
         stock=row[6],
+        warranty_months=row[7],
     )

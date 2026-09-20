@@ -125,3 +125,109 @@ def test_update_coverage_months_to_zero_makes_a_valid_warranty_expired(connectio
 
 def test_update_coverage_months_for_unknown_warranty_id_returns_none(connection):
     assert warranty_repo.update_coverage_months(connection, "does-not-exist", 0) is None
+
+
+def test_list_all_returns_every_seeded_warranty_sorted_by_id(connection):
+    warranties = warranty_repo.list_all(connection)
+    assert [warranty.warranty_id for warranty in warranties] == [
+        "warranty-001",
+        "warranty-002",
+        "warranty-003",
+        "warranty-004",
+        "warranty-005",
+    ]
+
+
+def test_list_all_returns_empty_when_there_are_no_warranties(connection):
+    connection.execute("DELETE FROM warranties")
+    assert warranty_repo.list_all(connection) == []
+
+
+def _unexpired(purchase_date: str) -> Warranty:
+    return Warranty(
+        warranty_id="w", order_id="o", product_id="p",
+        coverage_months=0, purchase_date=purchase_date,
+    )
+
+
+def test_coverage_for_reinstatement_makes_a_long_expired_warranty_valid_again():
+    warranty = _unexpired("2023-01-01")
+    today = date(2026, 9, 19)
+    assert warranty_repo.compute_validity(warranty, today=today).is_valid is False
+    coverage = warranty_repo.coverage_for_reinstatement(warranty, today=today)
+    reinstated = warranty.model_copy(update={"coverage_months": coverage})
+    assert warranty_repo.compute_validity(reinstated, today=today).is_valid is True
+
+
+def test_coverage_for_reinstatement_leaves_the_standard_window_whatever_the_purchase_date():
+    today = date(2026, 9, 19)
+    for purchase_date in ("2019-03-01", "2023-01-25", "2026-09-19", "2027-01-01"):
+        warranty = _unexpired(purchase_date)
+        coverage = warranty_repo.coverage_for_reinstatement(warranty, today=today)
+        validity = warranty_repo.compute_validity(
+            warranty.model_copy(update={"coverage_months": coverage}), today=today
+        )
+        assert validity.is_valid is True
+        assert validity.months_remaining == warranty_repo.REINSTATED_MONTHS_REMAINING
+
+
+def test_coverage_for_reinstatement_counts_from_the_purchase_date_not_from_today():
+    today = date(2026, 9, 19)
+    older = warranty_repo.coverage_for_reinstatement(_unexpired("2019-03-01"), today=today)
+    recent = warranty_repo.coverage_for_reinstatement(_unexpired("2026-03-01"), today=today)
+    assert older > recent
+
+
+def test_create_issues_a_warranty_that_can_be_read_back_by_order_and_product(connection):
+    warranty = warranty_repo.create(
+        connection,
+        order_id="order-001",
+        product_id="laptop-002",
+        coverage_months=24,
+        purchase_date="2026-09-19",
+    )
+    assert warranty.warranty_id.startswith("warranty-")
+    assert warranty_repo.get(connection, "order-001", "laptop-002") == warranty
+
+
+def test_update_changes_coverage_and_purchase_date_together(connection):
+    warranty = warranty_repo.update(
+        connection, "warranty-002", coverage_months=48, purchase_date="2026-01-15"
+    )
+    assert warranty.coverage_months == 48
+    assert warranty.purchase_date == "2026-01-15"
+
+
+def test_update_leaves_the_field_that_was_not_given_alone(connection):
+    before = warranty_repo.get_by_id(connection, "warranty-001")
+    after = warranty_repo.update(connection, "warranty-001", coverage_months=6)
+    assert after.coverage_months == 6
+    assert after.purchase_date == before.purchase_date
+
+
+def test_update_for_unknown_warranty_id_returns_none(connection):
+    assert warranty_repo.update(connection, "does-not-exist", coverage_months=6) is None
+
+
+def test_every_seeded_order_except_order_001_has_a_warranty(connection):
+    covered = {warranty.order_id for warranty in warranty_repo.list_all(connection)}
+    seeded_orders = {
+        row[0] for row in connection.execute("SELECT order_id FROM orders")
+    }
+    assert seeded_orders - covered == {"order-001"}
+
+
+def test_purchase_date_for_termination_leaves_a_past_purchase_alone():
+    warranty = _unexpired("2023-01-01")
+    assert (
+        warranty_repo.purchase_date_for_termination(warranty, today=date(2026, 9, 19))
+        == "2023-01-01"
+    )
+
+
+def test_purchase_date_for_termination_backdates_a_warranty_bought_today():
+    warranty = _unexpired("2026-09-19")
+    assert (
+        warranty_repo.purchase_date_for_termination(warranty, today=date(2026, 9, 19))
+        == "2026-09-18"
+    )

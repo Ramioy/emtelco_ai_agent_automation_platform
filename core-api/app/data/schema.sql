@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS clients (
 
 CREATE TABLE IF NOT EXISTS products (
     id TEXT PRIMARY KEY, category TEXT, name TEXT, brand TEXT,
-    price INTEGER, specs TEXT, stock INTEGER
+    price INTEGER, specs TEXT, stock INTEGER,
+    warranty_months INTEGER NOT NULL DEFAULT 12   -- coverage every sale of this product carries
 );
 
 CREATE TABLE IF NOT EXISTS orders (
@@ -28,9 +29,19 @@ CREATE TABLE IF NOT EXISTS warranty_claims (
     description TEXT, ticket_id TEXT, escalated INTEGER, created_at TEXT
 );
 
-CREATE TABLE IF NOT EXISTS escalations (
+CREATE TABLE IF NOT EXISTS escalations (        -- support tickets, see app/schemas/escalations.py
     ticket_id TEXT PRIMARY KEY, session_id TEXT, client_id TEXT,
-    reason TEXT, priority TEXT, status TEXT, created_at TEXT
+    reason TEXT, priority TEXT, status TEXT, created_at TEXT,
+    origin TEXT NOT NULL DEFAULT 'agent_request',  -- 'agent_request' | 'safety_risk'
+    assignee TEXT, resolution_note TEXT, updated_at TEXT
+);
+
+-- The one customer an authenticated end user of the chat frontend is allowed to act as
+CREATE TABLE IF NOT EXISTS identity_bindings (
+    subject_id TEXT PRIMARY KEY,               -- value of the X-End-User-Id header
+    client_id  TEXT NOT NULL,
+    bound_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- Memory: current session state plus cross-session history per client

@@ -10,6 +10,7 @@ class Product(BaseModel):
     price: int
     specs: dict
     stock: int
+    warranty_months: int
 
 
 class CompareRequest(BaseModel):

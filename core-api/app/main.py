@@ -1,4 +1,5 @@
 """FastAPI application entrypoint; business routers are registered here."""
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -15,9 +16,19 @@ from app.routers.sessions import router as sessions_router
 from app.routers.warranty import router as warranty_router
 
 
+logger = logging.getLogger("uvicorn.error")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db(get_settings().database_path)
+    settings = get_settings()
+    init_db(settings.database_path)
+    if not settings.isolation_enforced:
+        logger.warning(
+            "IDENTITY_ISOLATION=%s: per-user isolation is OFF. Any caller can read and write "
+            "any customer's data. Do not run a shipped configuration like this.",
+            settings.identity_isolation,
+        )
     yield
 
 
@@ -46,7 +57,8 @@ OPENAPI_TAGS = [
     },
     {
         "name": "escalations",
-        "description": "Manual escalation of a case to a human agent.",
+        "description": "Support tickets: raised by the agent or by the automatic safety "
+        "escalation, then worked through their lifecycle from the operations console.",
     },
 ]
 
@@ -62,8 +74,17 @@ app.include_router(warranty_router)
 
 class HealthResponse(BaseModel):
     status: str
+    identity_isolation: str
+    identity_rebinding: str
 
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    return HealthResponse(status="ok")
+    """The identity fields are part of the answer on purpose: which mode is active has to be
+    readable from the running service, not only from the environment file."""
+    settings = get_settings()
+    return HealthResponse(
+        status="ok",
+        identity_isolation=settings.identity_isolation,
+        identity_rebinding=settings.identity_rebinding,
+    )

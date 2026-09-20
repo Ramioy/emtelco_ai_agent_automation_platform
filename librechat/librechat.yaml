@@ -1,0 +1,90 @@
+# Registers the n8n webhook as an OpenAI-compatible custom endpoint. Bind-mounted into the
+# LibreChat container at /app/librechat.yaml by docker-compose.yml; LibreChat reads it at boot,
+# so a change here needs `docker compose restart librechat`. LibreChat exits with code 1 on a
+# validation error, so check `docker compose logs librechat` if it does not come back up.
+#
+# Schema reference: https://www.librechat.ai/docs/configuration/librechat_yaml
+
+version: 1.3.13
+cache: true
+
+endpoints:
+  custom:
+    - name: "Retail Support Agent"
+
+      # Required by the schema, but the n8n webhook has no authentication of its own: the only
+      # API key in this system is the one n8n sends to the FastAPI microservice, and it lives in
+      # an n8n credential, never here. LibreChat refuses to start with an empty `apiKey`, so put
+      # a dummy literal. Do NOT use "user_provided": that would prompt every user for a key that
+      # nothing checks.
+      apiKey: "n8n"
+
+      # n8n is a service in the same Compose project, so it is reachable by service name.
+      # `localhost` would be the LibreChat container's own loopback and would never leave it.
+      baseURL: "http://n8n:5678/webhook/agent-chat"
+
+      # By default LibreChat appends "/chat/completions" to `baseURL`. The n8n webhook path is
+      # fixed at /webhook/agent-chat, so tell LibreChat that `baseURL` already IS the completions
+      # endpoint. Without this, every request would 404 against
+      # /webhook/agent-chat/chat/completions.
+      directEndpoint: true
+
+      # THIS IS THE IMPORTANT PART.
+      #
+      # `x-conversation-id` is the primary source of the agent's session id. The n8n workflow
+      # derives its session key in three tiers: this header first, then a hash of the first user
+      # message, then the execution id. Without the header, the agent falls back to hashing the
+      # opening message, so two different customers who both start with "Hola" land in the SAME
+      # session: they share the conversational memory buffer and the stored session context
+      # (name, budget, preferences, last order consulted), and each one sees fragments of the
+      # other's conversation.
+      #
+      # `{{LIBRECHAT_BODY_CONVERSATIONID}}` is LibreChat's documented placeholder for the current
+      # conversation's id, substituted per request. One LibreChat conversation then maps to
+      # exactly one agent session, and a new chat starts a genuinely new session.
+      # `x-end-user-id` is the second half, and it is the security boundary rather than a
+      # convenience. LibreChat authenticates its users; without this header that identity
+      # stopped at the chat window, and the only thing the microservice knew about the customer
+      # was the cedula they had typed into the conversation. Anyone could open a new chat, type
+      # somebody else's number and be served their orders and home address.
+      #
+      # `{{LIBRECHAT_USER_ID}}` is LibreChat's documented placeholder for the authenticated
+      # user's id. The workflow forwards it to every tool call from the flow itself, never
+      # through the model, and the microservice links that user to the first cedula they verify
+      # and refuses every other one from then on. It is a header rather than part of the body
+      # for exactly that reason: nothing the customer writes and nothing the model decides can
+      # reach it.
+      headers:
+        x-conversation-id: "{{LIBRECHAT_BODY_CONVERSATIONID}}"
+        x-end-user-id: "{{LIBRECHAT_USER_ID}}"
+
+      # The workflow ignores the requested model name and always answers with the model
+      # configured in the n8n "DeepSeek Chat Model" node. This single entry just gives the
+      # LibreChat model selector something to show, and matches the `model` field the webhook
+      # echoes back. `fetch` must be false: the webhook does not implement GET /models.
+      models:
+        default: ["deepseek-flash"]
+        fetch: false
+
+      modelDisplayLabel: "Retail Support Agent"
+
+      # Title generation would send an extra, out-of-band completion request to the same webhook.
+      # That request would carry the same conversation id and therefore land in the customer's
+      # session, polluting the memory buffer with a summarisation prompt.
+      titleConvo: false
+
+      # REQUIRED, and the least obvious line here. The webhook always replies with a single,
+      # complete JSON body; it never streams SSE chunks. LibreChat streams from custom endpoints
+      # by default, and its client then reads `choices[0].delta`, which a plain chat.completion
+      # body does not have. The chat fails with "Cannot use 'in' operator to search for
+      # 'tool_calls' in undefined" and the reply comes back empty. `disableStreaming` makes
+      # LibreChat do a single non-streaming call instead, which is what the webhook answers.
+      # Putting `stream: false` in the request body is NOT enough: that only changes what the
+      # workflow is told, not how LibreChat reads the response.
+      addParams:
+        disableStreaming: true
+
+      # Sampling and penalty parameters are set on the n8n side (temperature lives in the
+      # DeepSeek Chat Model node), and the webhook ignores anything else in the body. Dropping
+      # them keeps the request minimal.
+      dropParams: ["frequency_penalty", "presence_penalty", "user"]

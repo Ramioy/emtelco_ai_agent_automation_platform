@@ -116,3 +116,71 @@ def test_create_generates_a_new_unique_order_id(connection):
     assert first.order_id != second.order_id
     assert orders_repo.get(connection, first.order_id) is not None
     assert orders_repo.get(connection, second.order_id) is not None
+
+
+def test_get_resolves_product_details_from_the_catalog(connection):
+    order = orders_repo.get(connection, "order-001")
+    assert [detail.model_dump() for detail in order.product_details] == [
+        {
+            "product_id": "laptop-002",
+            "name": "CreatorBook Pro 15",
+            "brand": "Zenda",
+            "price": 4800000,
+        }
+    ]
+
+
+def test_product_details_keeps_the_order_of_the_product_ids(connection):
+    connection.execute(
+        "UPDATE orders SET products = ? WHERE order_id = ?",
+        ('["tablet-001", "laptop-001"]', "order-001"),
+    )
+    order = orders_repo.get(connection, "order-001")
+    assert [detail.product_id for detail in order.product_details] == [
+        "tablet-001",
+        "laptop-001",
+    ]
+
+
+def test_product_details_keeps_an_entry_with_null_fields_for_a_product_off_the_catalog(
+    connection,
+):
+    connection.execute("DELETE FROM products WHERE id = ?", ("laptop-002",))
+    order = orders_repo.get(connection, "order-001")
+    assert order.products == ["laptop-002"]
+    assert [detail.model_dump() for detail in order.product_details] == [
+        {"product_id": "laptop-002", "name": None, "brand": None, "price": None}
+    ]
+
+
+def test_list_by_client_resolves_product_details_too(connection):
+    orders = orders_repo.list_by_client(connection, "1010101010")
+    names = {order.order_id: order.product_details[0].name for order in orders}
+    assert names["order-002"] == "SoundWave ANC"
+
+
+def test_create_returns_an_order_carrying_product_details(connection):
+    order = orders_repo.create(
+        connection,
+        client_id="1010101010",
+        product_id="laptop-001",
+        delivery_address="Calle Nueva 1",
+        estimated_delivery_date="2026-09-30",
+    )
+    assert order.product_details[0].name == "UltraBook Air 14"
+
+
+def test_list_all_returns_every_order_sorted_by_id(connection):
+    orders = orders_repo.list_all(connection)
+    assert [order.order_id for order in orders] == [
+        "order-001",
+        "order-002",
+        "order-003",
+        "order-004",
+        "order-005",
+        "order-006",
+    ]
+
+
+def test_resolve_product_details_for_an_empty_list_returns_empty(connection):
+    assert orders_repo.resolve_product_details(connection, []) == []

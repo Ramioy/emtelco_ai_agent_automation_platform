@@ -1,9 +1,12 @@
 # n8n instance
 
-- `data/` is the bind-mounted n8n home (SQLite database, encryption key, credentials). Not
-  version-controlled.
+- `workflows/agente-retail-electronica.json` is the workflow export. `docker compose up`
+  imports and publishes it automatically on a fresh instance.
 - `prompts/system_prompt.md` is the source of truth for the agent's system message.
 - `sync_prompt.py` copies that file into the exported workflow JSON.
+
+n8n's own state (SQLite database, encryption key, credentials) lives on the `n8n-data` Docker
+volume, not in this directory.
 
 ## Editing the agent's system prompt
 
@@ -27,12 +30,15 @@ is what keeps the two identical.
    file) or from the command line:
 
    ```
-   docker compose exec n8n n8n import:workflow --input=/path/inside/container/main-workflow.json
-   docker compose exec n8n n8n publish:workflow --id=<workflow id>
+   docker compose cp workflows/agente-retail-electronica.json n8n:/tmp/workflow.json
+   docker compose exec n8n n8n import:workflow --input=/tmp/workflow.json
+   docker compose exec n8n n8n publish:workflow --id=drK12CNSD8aZJyYl
    docker compose restart n8n
    ```
 
    Keeping the `id` field in the JSON is what makes the import update the existing workflow
-   instead of creating a duplicate.
+   instead of creating a duplicate. The restart is what re-registers the production webhook;
+   n8n says so itself when publishing. Automatic provisioning skips the import when the
+   workflow is already there, so it never undoes this.
 
 Never edit the system message directly in the n8n editor: the next sync run overwrites it.

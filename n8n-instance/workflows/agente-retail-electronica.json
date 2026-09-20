@@ -24,7 +24,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const input = $input.first().json;\nconst body = input.body ?? input;\nconst headers = input.headers ?? {};\nconst messages = Array.isArray(body.messages) ? body.messages : [];\n\nconst asText = (content) => {\n  if (typeof content === 'string') return content;\n  if (Array.isArray(content)) {\n    return content\n      .map((part) => (typeof part === 'string' ? part : (part && part.text) || ''))\n      .join(' ');\n  }\n  return '';\n};\n\n// FNV-1a instead of require('crypto'): the Code sandbox disallows Node builtins, and a session\n// key only has to stay stable across the turns of one conversation, not be cryptographic.\nconst fnv1a = (text, offsetBasis) => {\n  let hash = offsetBasis >>> 0;\n  for (let i = 0; i < text.length; i++) {\n    hash ^= text.charCodeAt(i);\n    hash = Math.imul(hash, 16777619) >>> 0;\n  }\n  return hash.toString(16).padStart(8, '0');\n};\n\nconst digest = (text) =>\n  fnv1a(text, 2166136261) +\n  fnv1a(text, 40389) +\n  fnv1a(text.length + ':' + text, 3735928559);\n\n// Incoming header names arrive lowercased, but fall back to a case-insensitive lookup so a\n// proxy that preserves the original casing does not silently drop the identifier.\nconst headerValue = (name) => {\n  const direct = headers[name];\n  if (typeof direct === 'string') return direct;\n  const key = Object.keys(headers).find((candidate) => candidate.toLowerCase() === name);\n  return typeof headers[key] === 'string' ? headers[key] : '';\n};\n\nconst firstUserMessage = messages.find((message) => message && message.role === 'user');\nconst seed = asText((firstUserMessage || messages[0] || {}).content).trim();\nconst lastMessage = asText((messages[messages.length - 1] || {}).content);\n\nconst bodyConversationId =\n  typeof body.conversation_id === 'string' ? body.conversation_id : '';\nconst conversationId = (headerValue('x-conversation-id') || bodyConversationId).trim();\n\nlet executionId = '';\ntry {\n  executionId = String($execution.id ?? '');\n} catch (error) {\n  executionId = '';\n}\n\n// Three tiers, most trustworthy first. A caller-supplied conversation id keeps two customers\n// who open with the same greeting apart; the content hash keeps plain curl testing stable\n// across turns; the execution id stops content-less requests from sharing one bucket.\nlet sessionId;\nlet sessionSource;\nif (conversationId) {\n  sessionId = 'cid-' + digest(conversationId);\n  sessionSource = 'conversation_id';\n} else if (seed) {\n  sessionId = digest(seed);\n  sessionSource = 'content_hash';\n} else {\n  sessionId = 'exec-' + (executionId || digest(String(Date.now()) + Math.random()));\n  sessionSource = 'execution';\n}\n\nreturn [\n  {\n    json: {\n      session_id: sessionId,\n      session_source: sessionSource,\n      last_message: lastMessage,\n      message_count: messages.length,\n    },\n  },\n];"
+        "jsCode": "const input = $input.first().json;\nconst body = input.body ?? input;\nconst headers = input.headers ?? {};\nconst messages = Array.isArray(body.messages) ? body.messages : [];\n\n// How many previous messages of the request are replayed to the agent. Twenty turns is far\n// more than the window buffer ever held and still a bounded prompt.\nconst HISTORY_LIMIT = 40;\n\nconst asText = (content) => {\n  if (typeof content === 'string') return content;\n  if (Array.isArray(content)) {\n    return content\n      .map((part) => (typeof part === 'string' ? part : (part && part.text) || ''))\n      .join(' ');\n  }\n  return '';\n};\n\n// FNV-1a instead of require('crypto'): the Code sandbox disallows Node builtins, and a session\n// key only has to stay stable across the turns of one conversation, not be cryptographic.\nconst fnv1a = (text, offsetBasis) => {\n  let hash = offsetBasis >>> 0;\n  for (let i = 0; i < text.length; i++) {\n    hash ^= text.charCodeAt(i);\n    hash = Math.imul(hash, 16777619) >>> 0;\n  }\n  return hash.toString(16).padStart(8, '0');\n};\n\nconst digest = (text) =>\n  fnv1a(text, 2166136261) +\n  fnv1a(text, 40389) +\n  fnv1a(text.length + ':' + text, 3735928559);\n\n// Incoming header names arrive lowercased, but fall back to a case-insensitive lookup so a\n// proxy that preserves the original casing does not silently drop the identifier.\nconst headerValue = (name) => {\n  const direct = headers[name];\n  if (typeof direct === 'string') return direct;\n  const key = Object.keys(headers).find((candidate) => candidate.toLowerCase() === name);\n  return typeof headers[key] === 'string' ? headers[key] : '';\n};\n\n// The only trusted identity in the system. It is whoever the chat frontend authenticated,\n// injected as a header; it never comes from the conversation, so nothing the customer types\n// and nothing the model decides can change it. Empty when the caller sent none, which the\n// microservice refuses rather than treating as permission.\nconst endUserId = headerValue('x-end-user-id').trim();\n\nconst firstUserMessage = messages.find((message) => message && message.role === 'user');\nconst seed = asText((firstUserMessage || messages[0] || {}).content).trim();\n\nconst bodyConversationId =\n  typeof body.conversation_id === 'string' ? body.conversation_id : '';\nconst conversationId = (headerValue('x-conversation-id') || bodyConversationId).trim();\n\nlet executionId = '';\ntry {\n  executionId = String($execution.id ?? '');\n} catch (error) {\n  executionId = '';\n}\n\n// Three tiers, most trustworthy first. A caller-supplied conversation id keeps two customers\n// who open with the same greeting apart; the content hash keeps plain curl testing stable\n// across turns; the execution id stops content-less requests from sharing one bucket.\nlet sessionId;\nlet sessionSource;\nif (conversationId) {\n  sessionId = 'cid-' + digest(conversationId);\n  sessionSource = 'conversation_id';\n} else if (seed) {\n  sessionId = digest(seed);\n  sessionSource = 'content_hash';\n} else {\n  sessionId = 'exec-' + (executionId || digest(String(Date.now()) + Math.random()));\n  sessionSource = 'execution';\n}\n\n// An OpenAI chat/completions client owns the conversation and resends all of it every turn, so\n// the request itself is the authoritative history: it survives an n8n restart and always\n// matches what the customer has on screen. Take the last user message as the question and\n// everything before it as the transcript.\nconst turns = messages\n  .filter((message) => message && (message.role === 'user' || message.role === 'assistant'))\n  .map((message) => ({ role: message.role, text: asText(message.content).trim() }))\n  .filter((turn) => turn.text);\n\nlet currentIndex = -1;\nfor (let i = turns.length - 1; i >= 0; i--) {\n  if (turns[i].role === 'user') {\n    currentIndex = i;\n    break;\n  }\n}\nif (currentIndex === -1) currentIndex = turns.length - 1;\n\nconst lastMessage = currentIndex >= 0 ? turns[currentIndex].text : '';\nconst history = turns.slice(0, Math.max(0, currentIndex)).slice(-HISTORY_LIMIT);\n\nconst transcript = history\n  .map((turn) => (turn.role === 'user' ? 'Customer: ' : 'Agent: ') + turn.text)\n  .join('\\n');\n\nconst agentInput = history.length\n  ? 'CONVERSATION SO FAR (already on the customer screen; this is your memory of it):\\n' +\n    transcript +\n    '\\n\\nCURRENT MESSAGE FROM THE CUSTOMER:\\n' +\n    lastMessage\n  : lastMessage;\n\n// The in-process window buffer is only a fallback for callers that send a single message and\n// expect the server to remember, because it lives in the n8n process and dies with it. When\n// the request carries its own history, that history wins and the buffer is bypassed with a\n// per-execution key, so the same turns are never fed to the model twice.\nconst memoryKey = history.length\n  ? sessionId + '#' + (executionId || digest(agentInput))\n  : sessionId;\n\nreturn [\n  {\n    json: {\n      session_id: sessionId,\n      session_source: sessionSource,\n      end_user_id: endUserId,\n      memory_key: memoryKey,\n      agent_input: agentInput,\n      last_message: lastMessage,\n      history_count: history.length,\n      message_count: messages.length,\n    },\n  },\n];"
       },
       "id": "00000000-0000-4a17-80de-000000000003",
       "name": "Derive Session",
@@ -38,9 +38,9 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "={{ $json.last_message }}",
+        "text": "={{ $json.agent_input }}",
         "options": {
-          "systemMessage": "You are the customer-service agent of an electronics retail store. You talk to customers through a chat window.\n\nLANGUAGE AND TONE\n- Always answer in Spanish, the way it is spoken in Colombia, whatever language these instructions are written in.\n- Warm and natural, professional without being stiff. Mirror the customer's register: technical if they write technically, plain if they write casually.\n- Use the customer's name once you know it. With someone new, ask only for what you need, one thing at a time. Keep answers short: two or three small paragraphs, and a list only when you are comparing products.\n- Do not use emojis.\n\nWHAT YOU ARE ALLOWED TO SAY\n- Every fact you give comes from a tool result in this conversation: product names, prices, specifications, stock, order numbers, statuses, dates, warranty coverage, ticket numbers, store policies. Never invent or estimate one.\n- If a tool returns nothing useful, say so plainly and offer the next step. Do not fill the gap with something plausible, and never recommend a product the catalog did not return.\n- Never say an action was done unless its tool came back successfully, and never promise what you have no tool for: discounts, refunds, reservations, a call at a given hour.\n- Never show raw JSON, field names, HTTP status codes or internal codes. Order numbers, product ids and ticket numbers are the only identifiers you may read out loud.\n\nIDENTIFYING THE CUSTOMER\n- Orders, warranties and personal data all need the customer's identification number (cedula, 4 to 11 digits). If you do not have it yet in this conversation, ask for it before calling any tool that needs it.\n- Always call verify_client before register_client. If the client already exists, do not ask them to register again: greet them by name and use their previous memory (budgets, products viewed, last order) as context.\n- Only call register_client once you have all four values: identification number, full name, phone and email. The store validates them: identification 4 to 11 digits; full name letters, spaces and accents only, up to 100 characters; phone exactly 10 digits starting with 3 or 6; email as nombre@correo.com, with no spaces. If the store rejects one field, ask the customer again only for that field, in plain words.\n\nBUDGET\n- If several budgets have been mentioned, the most recent one is the valid one. Never average them or add them up.\n\nCONFIRM BEFORE CHANGING ANYTHING\n- Four tools change real records: register_client, create_order, file_warranty_claim and update_delivery_address. Before each one, read back the exact values you are about to send and wait for an explicit yes. One yes covers one action; never chain two of them on the same confirmation.\n- Escalating to a human is the exception: when the customer asks for a person, escalate right away, without asking them to confirm it.\n\nWHAT THE STORE REFUSES\n- An order carries exactly one product, the customer must already be registered before create_order, and a product with no stock cannot be ordered: offer another option from the catalog.\n- The delivery address can only change while the order is still on its way. Once it is delivered or cancelled the store refuses the change; explain that instead of retrying.\n\nORDER STATUS WORDING\nTranslate the status code, never show it:\n- PENDING: \"tu pedido quedo registrado y esta en preparacion\"\n- PROCESSING: \"tu pedido se esta alistando en bodega\"\n- DISPATCHED: \"tu pedido ya salio del centro de distribucion\"\n- IN_TRANSIT: \"tu pedido va en camino\"\n- DELIVERED: \"tu pedido ya fue entregado\"\n- CANCELLED: \"tu pedido fue cancelado\"\n\nMEMORY\n- Call save_session_context as soon as the customer tells you their name, a budget or a preference in their own words. Do not use it for products viewed or orders checked: the store records those by itself.\n\nWARRANTY\n- get_warranty_status needs the order number and the id of the product in that order; get_order_status and list_orders_by_client both return that product. Call it before confirming or denying coverage. \"No warranty registered for that product\" and \"the warranty already expired\" are different answers; do not confuse them.\n- file_warranty_claim escalates safety cases by itself. If it comes back escalated, tell the customer that a specialist will contact them and do not call escalate_to_human again for the same case.\n\nWHEN TO ESCALATE\nCall escalate_to_human when the customer asks to talk to a person, is clearly frustrated, or you have failed twice to solve the same request. Give them the ticket number and tell them a human agent will follow up.\n\nWHEN NOT TO USE A TOOL\nGreetings, thanks, small talk and general advice that needs no store data are answered directly. If a tool fails, retry at most once; if it fails again, apologise and offer to escalate.",
+          "systemMessage": "You are the customer-service agent of an electronics retail store. You talk to customers through a chat window.\n\nLANGUAGE AND TONE\n- Always answer in Spanish, the way it is spoken in Colombia, whatever language these instructions are written in.\n- Warm and natural, professional without being stiff. Mirror the customer's register: technical if they write technically, plain if they write casually.\n- Use the customer's name once you know it. With someone new, ask only for what you need, one thing at a time. Keep answers short: two or three small paragraphs, and a list only when you are comparing products.\n- Do not use emojis.\n\nWHAT YOU ARE ALLOWED TO SAY\n- Every fact you give comes from a tool result in this conversation: product names, prices, specifications, stock, order numbers, statuses, dates, warranty coverage, ticket numbers, store policies. Never invent or estimate one.\n- If a tool returns nothing useful, say so plainly and offer the next step. Do not fill the gap with something plausible, and never recommend a product the catalog did not return.\n- Never say an action was done unless its tool came back successfully, and never promise what you have no tool for: discounts, refunds, reservations, a call at a given hour.\n- Never show raw JSON, field names, HTTP status codes or internal codes. Order numbers and ticket numbers are the only identifiers you may read out loud, because the customer can quote those back to us.\n- Call a product by its commercial name and brand, never by its product id. You need the id to call tools, but the customer should never see it, not even in parentheses next to the name. Order lookups already return that name and brand, so never search the catalog just to name what somebody bought.\n\nIDENTIFYING THE CUSTOMER\n- The customer identifies themselves once, with their identification number (cedula, 4 to 11 digits). verify_client and register_client are the only tools that take it; ask for it before calling them, and never send it to any other tool. Everything about orders, warranties and personal data is refused until that identification happened in this conversation.\n- The store links this chat window to the first customer identified in it, and from then on it only answers about that person. You never send an identification number to list orders, create an order or file a claim: the store already knows whose they are.\n- If a tool comes back saying this user is linked to a different customer, or that no customer has been identified yet, that is the store refusing, not a mistake you can retry. Say plainly \"no puedo consultar datos de otra persona desde esta conversacion\" and offer to help with the account this chat belongs to. Never try another identification number, never ask the customer to give you a different one, and never guess an order number to get around it.\n- Always call verify_client before register_client. If the client already exists, do not ask them to register again: greet them by name and use their previous memory (budgets, products viewed, last order) as context.\n- Only call register_client once you have all four values: identification number, full name, phone and email. The store validates them: identification 4 to 11 digits; full name letters, spaces and accents only, up to 100 characters; phone exactly 10 digits starting with 3 or 6; email as nombre@correo.com, with no spaces. If the store rejects one field, ask the customer again only for that field, in plain words.\n\nBUDGET\n- If several budgets have been mentioned, the most recent one is the valid one. Never average them or add them up.\n\nCONFIRM BEFORE CHANGING ANYTHING\n- Four tools change real records: register_client, create_order, file_warranty_claim and update_delivery_address. Before each one, read back the exact values you are about to send and wait for an explicit yes. One yes covers one action; never chain two of them on the same confirmation.\n- Escalating to a human is the exception: when the customer asks for a person, escalate right away, without asking them to confirm it.\n\nWHAT THE STORE REFUSES\n- An order carries exactly one product, the customer must already be registered before create_order, and a product with no stock cannot be ordered: offer another option from the catalog.\n- The delivery address can only change while the order is still on its way. Once it is delivered or cancelled the store refuses the change; explain that instead of retrying.\n- You only ever see the orders, warranties and claims of the customer this chat is linked to. There is no tool that lists other people's orders or tickets, and none that cancels an order or moves it forward: for those, escalate to a human.\n\nORDER STATUS WORDING\nTranslate the status code, never show it:\n- PENDING: \"tu pedido quedo registrado y esta en preparacion\"\n- PROCESSING: \"tu pedido se esta alistando en bodega\"\n- DISPATCHED: \"tu pedido ya salio del centro de distribucion\"\n- IN_TRANSIT: \"tu pedido va en camino\"\n- DELIVERED: \"tu pedido ya fue entregado\"\n- CANCELLED: \"tu pedido fue cancelado\"\n\nMEMORY\n- A message may open with a block headed CONVERSATION SO FAR, followed by CURRENT MESSAGE FROM THE CUSTOMER. That block is the transcript the customer is looking at right now; treat it as your own memory of this conversation and answer only the current message. Never mention the transcript, the headings, or the fact that you were given them.\n- Order numbers, ticket numbers and identification numbers that appear in that transcript are yours to reuse: if the customer already gave you one, or you already told them one, do not ask for it again. You may still call a tool to re-check a fact before stating it.\n- Call save_session_context as soon as the customer tells you their name, a budget or a preference in their own words. Do not use it for products viewed or orders checked: the store records those by itself.\n\nWARRANTY\n- Every product in the catalog states the months of warranty it is sold with, and create_order registers that coverage automatically, counted from the day of the purchase, and returns it. Mention the coverage when you recommend a product and when you confirm a purchase: the customer does nothing to activate it, and can claim on it the same day.\n- get_warranty_status needs the order number and the id of the product in that order; get_order_status and list_my_orders both return that product. Call it before confirming or denying coverage. \"No warranty registered for that product\" and \"the warranty already expired\" are different answers; do not confuse them.\n- file_warranty_claim escalates safety cases by itself. If it comes back escalated, tell the customer that a specialist will contact them and do not call escalate_to_human again for the same case.\n\nWHEN TO ESCALATE\nCall escalate_to_human when the customer asks to talk to a person, is clearly frustrated, or you have failed twice to solve the same request. Give them the ticket number and tell them a human agent will follow up.\n\nWHEN NOT TO USE A TOOL\nGreetings, thanks, small talk and general advice that needs no store data are answered directly. If a tool fails, retry at most once; if it fails again, apologise and offer to escalate.",
           "maxIterations": 12,
           "enableStreaming": false
         }
@@ -94,7 +94,7 @@
     {
       "parameters": {
         "sessionIdType": "customKey",
-        "sessionKey": "={{ $('Derive Session').first().json.session_id }}",
+        "sessionKey": "={{ $('Derive Session').first().json.memory_key }}",
         "contextWindowLength": 10
       },
       "id": "00000000-0000-4a17-80de-000000000007",
@@ -113,6 +113,16 @@
         "url": "=http://api:8000/api/v1/clients/{{ $fromAI('client_id', \"Identification number (cedula) of the client, 4 to 11 digits\", 'string') }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-End-User-Id",
+              "value": "={{ $('Derive Session').first().json.end_user_id }}"
+            }
+          ]
+        },
         "sendQuery": true,
         "specifyQuery": "keypair",
         "queryParameters": {
@@ -153,6 +163,16 @@
         "url": "http://api:8000/api/v1/clients",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-End-User-Id",
+              "value": "={{ $('Derive Session').first().json.end_user_id }}"
+            }
+          ]
+        },
         "sendQuery": true,
         "specifyQuery": "keypair",
         "queryParameters": {
@@ -216,6 +236,16 @@
         "url": "=http://api:8000/api/v1/sessions/{{ $('Derive Session').first().json.session_id }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-End-User-Id",
+              "value": "={{ $('Derive Session').first().json.end_user_id }}"
+            }
+          ]
+        },
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -245,11 +275,21 @@
     },
     {
       "parameters": {
-        "toolDescription": "Search the product catalog of the store. Pass a category and a maximum budget when the customer described either of them, and leave out the one they did not mention. Returns the real products with their real price, specifications and stock. Never recommend a product that is not in this result.",
+        "toolDescription": "Search the product catalog of the store. Pass a category and a maximum budget when the customer described either of them, and leave out the one they did not mention. Returns the real products with their real price, specifications, stock and the months of warranty each one is sold with. Never recommend a product that is not in this result.",
         "method": "GET",
         "url": "http://api:8000/api/v1/catalog/products",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-End-User-Id",
+              "value": "={{ $('Derive Session').first().json.end_user_id }}"
+            }
+          ]
+        },
         "sendQuery": true,
         "specifyQuery": "json",
         "jsonQuery": "={{ JSON.stringify(Object.fromEntries(Object.entries({category: $fromAI('category', \"Product category the customer is interested in, for example laptop, smartphone, tablet or headphones; empty when they did not name one\", 'string', ''), max_budget: $fromAI('max_budget', \"Most recent maximum budget the customer stated, in Colombian pesos, as a plain number; 0 when they did not state one\", 'number', 0), session_id: $('Derive Session').first().json.session_id}).filter((entry) => entry[1] !== '' && entry[1] !== 0))) }}",
@@ -278,11 +318,21 @@
     },
     {
       "parameters": {
-        "toolDescription": "Compare two or more products by id and get back the fields where they actually differ, price and specifications. Use the ids returned by get_catalog. Use this instead of comparing the catalog data yourself: the differences it returns are what you build the recommendation on.",
+        "toolDescription": "Compare two or more products by id and get back the fields where they actually differ: price, brand, stock, months of warranty and individual specifications. Use the ids returned by get_catalog. Use this instead of comparing the catalog data yourself: the differences it returns are what you build the recommendation on.",
         "method": "POST",
         "url": "http://api:8000/api/v1/catalog/compare",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-End-User-Id",
+              "value": "={{ $('Derive Session').first().json.end_user_id }}"
+            }
+          ]
+        },
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -312,11 +362,21 @@
     },
     {
       "parameters": {
-        "toolDescription": "Create an order for one product. Call this only after the customer explicitly confirmed which product they want and the address it must be delivered to. One order carries exactly one product. Returns the order number and the estimated delivery date.",
+        "toolDescription": "Create an order for one product. Call this only after the customer explicitly confirmed which product they want and the address it must be delivered to. One order carries exactly one product. The store already knows who the buyer is, so there is no identification number to send. Returns the order number, the estimated delivery date, the name, brand and price of the product bought, and the months of warranty the store registers for it automatically from today; tell the customer that coverage when you confirm the purchase.",
         "method": "POST",
         "url": "http://api:8000/api/v1/orders",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-End-User-Id",
+              "value": "={{ $('Derive Session').first().json.end_user_id }}"
+            }
+          ]
+        },
         "sendQuery": true,
         "specifyQuery": "keypair",
         "queryParameters": {
@@ -332,10 +392,6 @@
         "specifyBody": "keypair",
         "bodyParameters": {
           "parameters": [
-            {
-              "name": "client_id",
-              "value": "={{ $fromAI('client_id', \"Identification number of an already registered client\", 'string') }}"
-            },
             {
               "name": "product_id",
               "value": "={{ $fromAI('product_id', \"Id of the product to buy, taken from get_catalog\", 'string') }}"
@@ -371,11 +427,21 @@
     },
     {
       "parameters": {
-        "toolDescription": "Get the current status of an order by its order number. Always translate the status into plain Spanish for the customer instead of repeating the code. Use this when the customer asks where their order is.",
+        "toolDescription": "Get the current status of an order by its order number, together with the name, brand, price and id of the product it carries. Always translate the status into plain Spanish for the customer instead of repeating the code. Use this when the customer asks where their order is.",
         "method": "GET",
         "url": "=http://api:8000/api/v1/orders/{{ $fromAI('order_id', \"Order number the customer is asking about\", 'string') }}/status",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-End-User-Id",
+              "value": "={{ $('Derive Session').first().json.end_user_id }}"
+            }
+          ]
+        },
         "sendQuery": true,
         "specifyQuery": "keypair",
         "queryParameters": {
@@ -411,11 +477,21 @@
     },
     {
       "parameters": {
-        "toolDescription": "Get the estimated delivery date of an order. Use this when the customer asks specifically when the order will arrive, rather than what its status is.",
+        "toolDescription": "Get the estimated delivery date of an order, with the name and brand of the product it carries. Use this when the customer asks specifically when the order will arrive, rather than what its status is.",
         "method": "GET",
         "url": "=http://api:8000/api/v1/orders/{{ $fromAI('order_id', \"Order number the customer is asking about\", 'string') }}/eta",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-End-User-Id",
+              "value": "={{ $('Derive Session').first().json.end_user_id }}"
+            }
+          ]
+        },
         "options": {
           "response": {
             "response": {
@@ -446,6 +522,16 @@
         "url": "=http://api:8000/api/v1/orders/{{ $fromAI('order_id', \"Order number whose delivery address must change\", 'string') }}/address",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-End-User-Id",
+              "value": "={{ $('Derive Session').first().json.end_user_id }}"
+            }
+          ]
+        },
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "keypair",
@@ -482,11 +568,21 @@
     },
     {
       "parameters": {
-        "toolDescription": "List every order of a client, by their identification number. Use this when the customer wants to track an order but does not remember the order number: ask for their identification number instead. If several orders come back, ask which one they mean before looking up its status.",
+        "toolDescription": "List the orders of the customer this conversation belongs to. Use this when the customer wants to track an order but does not remember the order number. It takes no parameters: the store already knows whose orders these are. Every order comes back with its status, estimated delivery date, delivery address and the name, brand and id of the product it carries, so answer from this result and name the products instead of asking for an order number again.",
         "method": "GET",
-        "url": "=http://api:8000/api/v1/orders/by-client/{{ $fromAI('client_id', \"Identification number (cedula) of the client, 4 to 11 digits\", 'string') }}",
+        "url": "http://api:8000/api/v1/orders/mine",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-End-User-Id",
+              "value": "={{ $('Derive Session').first().json.end_user_id }}"
+            }
+          ]
+        },
         "options": {
           "response": {
             "response": {
@@ -496,7 +592,7 @@
         }
       },
       "id": "00000000-0000-4a17-80de-000000000011",
-      "name": "list_orders_by_client",
+      "name": "list_my_orders",
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.5,
       "position": [
@@ -512,11 +608,21 @@
     },
     {
       "parameters": {
-        "toolDescription": "Check whether a product bought in a given order has warranty coverage and whether it is still valid. Call this before confirming or denying coverage. A not-found answer means no warranty was ever registered for that product, which is a different answer from a warranty that existed and expired.",
+        "toolDescription": "Check the warranty of a product bought in a given order: whether the coverage is still valid and how many months of it remain. Every purchase made through the store carries the coverage of the product sold, so a recent order normally has one. Call this before confirming or denying coverage. A not-found answer means no warranty was ever registered for that product, which is a different answer from a warranty that existed and expired.",
         "method": "GET",
         "url": "http://api:8000/api/v1/warranty/status",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-End-User-Id",
+              "value": "={{ $('Derive Session').first().json.end_user_id }}"
+            }
+          ]
+        },
         "sendQuery": true,
         "specifyQuery": "keypair",
         "queryParameters": {
@@ -556,11 +662,21 @@
     },
     {
       "parameters": {
-        "toolDescription": "File a warranty claim describing the fault in the customer's own words. Call this only after checking the warranty status and after the customer confirmed they want the case filed. Always returns a ticket number. When the description involves a safety risk such as smoke, fire, sparks or an explosion, the store escalates the case to a human by itself and says so in the answer; no second call is needed.",
+        "toolDescription": "File a warranty claim describing the fault in the customer's own words. Call this only after checking the warranty status and after the customer confirmed they want the case filed. The store already knows whose claim it is, so there is no identification number to send. Always returns a ticket number. When the description involves a safety risk such as smoke, fire, sparks or an explosion, the store escalates the case to a human by itself and says so in the answer; no second call is needed.",
         "method": "POST",
         "url": "http://api:8000/api/v1/warranty/claims",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-End-User-Id",
+              "value": "={{ $('Derive Session').first().json.end_user_id }}"
+            }
+          ]
+        },
         "sendQuery": true,
         "specifyQuery": "keypair",
         "queryParameters": {
@@ -583,10 +699,6 @@
             {
               "name": "description",
               "value": "={{ $fromAI('description', \"The fault in the customer's own words; keep any wording about smoke, fire, sparks or heat instead of softening it\", 'string') }}"
-            },
-            {
-              "name": "client_id",
-              "value": "={{ $fromAI('client_id', \"Identification number (cedula) of the client, 4 to 11 digits\", 'string') }}"
             }
           ]
         },
@@ -620,6 +732,16 @@
         "url": "http://api:8000/api/v1/escalations",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-End-User-Id",
+              "value": "={{ $('Derive Session').first().json.end_user_id }}"
+            }
+          ]
+        },
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "keypair",
@@ -818,17 +940,6 @@
         ]
       ]
     },
-    "list_orders_by_client": {
-      "ai_tool": [
-        [
-          {
-            "node": "AI Agent",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "get_warranty_status": {
       "ai_tool": [
         [
@@ -852,6 +963,17 @@
       ]
     },
     "escalate_to_human": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "list_my_orders": {
       "ai_tool": [
         [
           {

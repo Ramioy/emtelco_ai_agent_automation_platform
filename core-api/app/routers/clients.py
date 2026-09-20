@@ -1,13 +1,15 @@
-"""HTTP endpoints for the clients domain."""
+"""HTTP endpoints for the clients domain; also where an end user binds to one customer."""
 import sqlite3
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from app import identity
 from app.auth import require_api_key
 from app.db import get_db
 from app.errors import DomainError
+from app.identity import Subject, get_subject
 from app.repositories import client_memory as client_memory_repo
 from app.repositories import clients as clients_repo
 from app.repositories import interactions as interactions_repo
@@ -30,10 +32,17 @@ def get_client(
     client_id: str,
     session_id: str | None = None,
     connection: sqlite3.Connection = Depends(get_db),
+    subject: Subject = Depends(get_subject),
 ):
+    """Identification, and therefore the moment an end user gets bound to a customer. The link
+    is only recorded when the client actually exists, so probing unregistered numbers cannot
+    burn the binding on one that is not theirs."""
+    identity.authorize_identification(connection, subject, client_id)
     client = clients_repo.get(connection, client_id)
     if client is None:
         return JSONResponse(status_code=404, content={"exists": False})
+
+    identity.bind(connection, subject, client_id)
 
     if session_id is not None:
         sessions_repo.link_client(connection, session_id, client_id)
@@ -53,12 +62,18 @@ def create_client(
     payload: ClientCreate,
     session_id: str | None = None,
     connection: sqlite3.Connection = Depends(get_db),
+    subject: Subject = Depends(get_subject),
 ) -> ClientCreateResponse:
+    """The identification number stays in the body here, because a brand-new customer is
+    precisely the case where there is nothing yet to derive it from. It is still gated: an end
+    user already bound to somebody else cannot register a second person onto themselves."""
+    identity.authorize_identification(connection, subject, payload.client_id)
     if clients_repo.exists(connection, payload.client_id):
         raise DomainError(
             status_code=409, code="already_exists", message="Client already exists"
         )
     client = clients_repo.insert(connection, payload)
+    identity.bind(connection, subject, client.client_id)
 
     if session_id is not None:
         sessions_repo.link_client(connection, session_id, client.client_id)
@@ -69,7 +84,12 @@ def create_client(
 @router.get(
     "/{client_id}/history", summary="Get a client's current memory and past session summaries"
 )
-def get_client_history(client_id: str, connection: sqlite3.Connection = Depends(get_db)):
+def get_client_history(
+    client_id: str,
+    connection: sqlite3.Connection = Depends(get_db),
+    subject: Subject = Depends(get_subject),
+):
+    identity.authorize_client_access(connection, subject, client_id)
     current_memory = client_memory_repo.get(connection, client_id)
     past_sessions = interactions_repo.list_sessions_for_client(connection, client_id)
     return {

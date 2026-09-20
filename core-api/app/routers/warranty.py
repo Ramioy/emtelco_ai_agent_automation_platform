@@ -5,14 +5,23 @@ import uuid
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from app.auth import require_api_key
+from app import identity
+from app.auth import require_api_key, require_operator_key
 from app.db import get_db
 from app.errors import DomainError
+from app.identity import Subject, get_subject
+from app.repositories import catalog as catalog_repo
 from app.repositories import escalations as escalations_repo
 from app.repositories import orders as orders_repo
 from app.repositories import warranty as warranty_repo
 from app.repositories import warranty_claims as warranty_claims_repo
-from app.schemas.warranty import TerminateResponse
+from app.schemas.warranty import (
+    Warranty,
+    WarrantyStateResponse,
+    WarrantySummary,
+    WarrantyUpdateRequest,
+)
+from app.schemas.escalations import SAFETY_RISK
 from app.schemas.warranty_claims import ClaimCreateRequest, ClaimCreateResponse
 
 ESCALATION_PRIORITY = "high"
@@ -24,9 +33,43 @@ router = APIRouter(
 )
 
 
+@router.get(
+    "",
+    response_model=list[WarrantySummary],
+    dependencies=[Depends(require_operator_key)],
+    summary="List every registered warranty (operations, not a tool)",
+)
+def list_warranties(connection: sqlite3.Connection = Depends(get_db)) -> list[WarrantySummary]:
+    """Not exposed as an agent tool: the agent only ever asks about one order's coverage. It
+    backs the operations console that drives the demo."""
+    warranties = warranty_repo.list_all(connection)
+    product_ids = [warranty.product_id for warranty in warranties]
+    products = catalog_repo.get_by_ids(connection, product_ids) if product_ids else []
+    names = {product.id: product.name for product in products}
+    summaries = []
+    for warranty in warranties:
+        validity = warranty_repo.compute_validity(warranty)
+        summaries.append(
+            WarrantySummary(
+                warranty_id=warranty.warranty_id,
+                order_id=warranty.order_id,
+                product_id=warranty.product_id,
+                product_name=names.get(warranty.product_id),
+                coverage_months=warranty.coverage_months,
+                purchase_date=warranty.purchase_date,
+                is_valid=validity.is_valid,
+                months_remaining=validity.months_remaining,
+            )
+        )
+    return summaries
+
+
 @router.get("/status", summary="Check warranty status for an order/product")
 def get_warranty_status(
-    order_id: str, product_id: str, connection: sqlite3.Connection = Depends(get_db)
+    order_id: str,
+    product_id: str,
+    connection: sqlite3.Connection = Depends(get_db),
+    subject: Subject = Depends(get_subject),
 ):
     """Distinguishes "no warranty registered at all" (404 {exists: false}, a functional
     branch the agent needs, same exception to the error envelope as GET /clients/{id}) from
@@ -34,13 +77,15 @@ def get_warranty_status(
     warranty = warranty_repo.get(connection, order_id, product_id)
     if warranty is None:
         return JSONResponse(status_code=404, content={"exists": False})
+    _authorize_order(connection, subject, warranty.order_id)
     return warranty_repo.compute_validity(warranty)
 
 
 def _resolve_warranty_id(connection: sqlite3.Connection, order_id: str) -> str | None:
     """The claims request body only carries order_id, not product_id -- resolvable because
-    an order always holds exactly one product. Silently returns None (no error) if the order
-    or its warranty isn't found: this is a best-effort audit link, not a validation gate."""
+    an order always holds exactly one product. Returns None when the order carries no warranty:
+    a claim on an uncovered product is still a claim, so this link is best-effort. The order
+    itself has already been checked by the caller."""
     order = orders_repo.get(connection, order_id)
     if order is None or not order.products:
         return None
@@ -58,10 +103,14 @@ def create_warranty_claim(
     payload: ClaimCreateRequest,
     session_id: str | None = None,
     connection: sqlite3.Connection = Depends(get_db),
+    subject: Subject = Depends(get_subject),
 ) -> ClaimCreateResponse:
     """escalated is computed from risk keywords in the description; when true, this endpoint
     also creates the escalations row itself -- defense in depth, so the safety case never
-    depends on the agent remembering a second tool call."""
+    depends on the agent remembering a second tool call. The claimant is derived from the
+    trusted identity, and the order has to be theirs."""
+    _authorize_order(connection, subject, payload.order_id)
+    client_id = identity.resolve_client_id(connection, subject, payload.client_id)
     escalated = warranty_claims_repo.matches_risk_keyword(payload.description)
     ticket_id = f"ticket-{uuid.uuid4().hex[:8]}"
 
@@ -69,7 +118,7 @@ def create_warranty_claim(
         connection,
         ticket_id=ticket_id,
         warranty_id=_resolve_warranty_id(connection, payload.order_id),
-        client_id=payload.client_id,
+        client_id=client_id,
         description=payload.description,
         escalated=escalated,
     )
@@ -80,9 +129,10 @@ def create_warranty_claim(
             connection,
             ticket_id=ticket_id,
             session_id=session_id,
-            client_id=payload.client_id,
+            client_id=client_id,
             reason=reason,
             priority=ESCALATION_PRIORITY,
+            origin=SAFETY_RISK,
         )
 
     return ClaimCreateResponse(
@@ -95,20 +145,105 @@ def create_warranty_claim(
 
 @router.patch(
     "/{warranty_id}/terminate",
-    response_model=TerminateResponse,
+    response_model=WarrantyStateResponse,
+    dependencies=[Depends(require_operator_key)],
     summary="Force a warranty to expire (development only)",
 )
 def terminate_warranty_dev_only(
     warranty_id: str, connection: sqlite3.Connection = Depends(get_db)
-) -> TerminateResponse:
+) -> WarrantyStateResponse:
     """Development-only endpoint: not exposed as an agent tool, lets the demo video show an
     "expired warranty" case without waiting for a real one to lapse.
-    Sets coverage_months=0 and reuses compute_validity's own formula, rather than a second
-    is_valid flag that could drift out of sync with it."""
-    warranty = warranty_repo.update_coverage_months(connection, warranty_id, 0)
-    if warranty is None:
+    Sets coverage to zero and reuses compute_validity's own formula, rather than a second
+    is_valid flag that could drift out of sync with it. A record bought today is also
+    backdated a day, because a window that closes today still counts as covered."""
+    existing = warranty_repo.get_by_id(connection, warranty_id)
+    if existing is None:
+        raise _warranty_not_found(warranty_id)
+    warranty = warranty_repo.update(
+        connection,
+        warranty_id,
+        coverage_months=0,
+        purchase_date=warranty_repo.purchase_date_for_termination(existing),
+    )
+    return _state_response(warranty)
+
+
+@router.patch(
+    "/{warranty_id}/reinstate",
+    response_model=WarrantyStateResponse,
+    dependencies=[Depends(require_operator_key)],
+    summary="Put an expired warranty back under coverage (development only)",
+)
+def reinstate_warranty_dev_only(
+    warranty_id: str, connection: sqlite3.Connection = Depends(get_db)
+) -> WarrantyStateResponse:
+    """The counterpart of terminate, so a demo can show the expired case and then come back
+    from it. Two explicit endpoints rather than one toggle: each is idempotent, so a repeated
+    click or a stale page cannot flip the warranty into the state nobody asked for.
+    It does not put back the coverage the warranty had before: validity is purchase date plus
+    coverage, so a warranty bought years ago would expire again the instant its original
+    coverage returned. It extends coverage instead, leaving the same remaining window whatever
+    the purchase date, and never rewrites that date, which belongs to the order."""
+    existing = warranty_repo.get_by_id(connection, warranty_id)
+    if existing is None:
+        raise _warranty_not_found(warranty_id)
+    coverage_months = warranty_repo.coverage_for_reinstatement(existing)
+    warranty = warranty_repo.update_coverage_months(connection, warranty_id, coverage_months)
+    return _state_response(warranty)
+
+
+@router.patch(
+    "/{warranty_id}",
+    response_model=WarrantyStateResponse,
+    dependencies=[Depends(require_operator_key)],
+    summary="Edit a warranty's coverage or purchase date (development only)",
+)
+def update_warranty_dev_only(
+    warranty_id: str,
+    payload: WarrantyUpdateRequest,
+    connection: sqlite3.Connection = Depends(get_db),
+) -> WarrantyStateResponse:
+    """The full editor behind the console, next to the two one-click shortcuts: coverage and
+    purchase date are the only inputs validity is computed from, so between them an operator
+    can stage any case the agent has to report, including ones neither shortcut produces."""
+    if warranty_repo.get_by_id(connection, warranty_id) is None:
+        raise _warranty_not_found(warranty_id)
+    warranty = warranty_repo.update(
+        connection,
+        warranty_id,
+        coverage_months=payload.coverage_months,
+        purchase_date=payload.purchase_date,
+    )
+    return _state_response(warranty)
+
+
+def _authorize_order(
+    connection: sqlite3.Connection, subject: Subject, order_id: str
+) -> None:
+    """A warranty is reachable only through the order it was sold with, so the order's owner is
+    what decides who may see it. A missing order is refused rather than waved through: with
+    nobody to attribute the record to there is nobody it can be checked against."""
+    order = orders_repo.get(connection, order_id)
+    if order is None:
         raise DomainError(
-            status_code=404, code="not_found", message=f"Warranty {warranty_id} not found"
+            status_code=404, code="not_found", message=f"Order {order_id} not found"
         )
+    identity.authorize_client_access(connection, subject, order.client_id)
+
+
+def _warranty_not_found(warranty_id: str) -> DomainError:
+    return DomainError(
+        status_code=404, code="not_found", message=f"Warranty {warranty_id} not found"
+    )
+
+
+def _state_response(warranty: Warranty) -> WarrantyStateResponse:
     validity = warranty_repo.compute_validity(warranty)
-    return TerminateResponse(warranty_id=warranty.warranty_id, is_valid=validity.is_valid)
+    return WarrantyStateResponse(
+        warranty_id=warranty.warranty_id,
+        is_valid=validity.is_valid,
+        coverage_months=warranty.coverage_months,
+        purchase_date=warranty.purchase_date,
+        months_remaining=validity.months_remaining,
+    )

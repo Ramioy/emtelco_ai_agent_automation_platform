@@ -3,4 +3,4 @@
 **/*.pyc
 .pytest_cache/
 tests/
-app/data/mock.db
+app/data/db/
