@@ -1,0 +1,74 @@
+[
+  {
+    "id": "laptop-001",
+    "category": "laptop",
+    "name": "UltraBook Air 14",
+    "brand": "Zenda",
+    "price": 3200000,
+    "specs": {"ram_gb": 8, "storage_gb": 256, "cpu": "Intel i5", "gpu": "Integrated", "screen_inches": 14},
+    "stock": 10
+  },
+  {
+    "id": "laptop-002",
+    "category": "laptop",
+    "name": "CreatorBook Pro 15",
+    "brand": "Zenda",
+    "price": 4800000,
+    "specs": {"ram_gb": 16, "storage_gb": 512, "cpu": "AMD Ryzen 7", "gpu": "RTX 3050", "screen_inches": 15},
+    "stock": 5
+  },
+  {
+    "id": "laptop-003",
+    "category": "laptop",
+    "name": "StudioBook X",
+    "brand": "Northgate",
+    "price": 7200000,
+    "specs": {"ram_gb": 32, "storage_gb": 1000, "cpu": "Intel i7", "gpu": "RTX 4060", "screen_inches": 16},
+    "stock": 3
+  },
+  {
+    "id": "smartphone-001",
+    "category": "smartphone",
+    "name": "Nova X12",
+    "brand": "Halox",
+    "price": 2100000,
+    "specs": {"ram_gb": 8, "storage_gb": 128, "screen_inches": 6.1, "camera_mp": 48},
+    "stock": 20
+  },
+  {
+    "id": "smartphone-002",
+    "category": "smartphone",
+    "name": "Nova X12 Pro",
+    "brand": "Halox",
+    "price": 3400000,
+    "specs": {"ram_gb": 12, "storage_gb": 256, "screen_inches": 6.5, "camera_mp": 108},
+    "stock": 8
+  },
+  {
+    "id": "tablet-001",
+    "category": "tablet",
+    "name": "TabPro 11",
+    "brand": "Northgate",
+    "price": 1800000,
+    "specs": {"ram_gb": 6, "storage_gb": 128, "screen_inches": 11},
+    "stock": 12
+  },
+  {
+    "id": "headphones-001",
+    "category": "headphones",
+    "name": "SoundWave ANC",
+    "brand": "Aurex",
+    "price": 650000,
+    "specs": {"type": "over-ear", "noise_cancelling": true, "battery_hours": 30},
+    "stock": 25
+  },
+  {
+    "id": "headphones-002",
+    "category": "headphones",
+    "name": "SoundWave Buds",
+    "brand": "Aurex",
+    "price": 380000,
+    "specs": {"type": "in-ear", "noise_cancelling": false, "battery_hours": 20},
+    "stock": 0
+  }
+]

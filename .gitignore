@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environment files (.env.example is committed)
+.env
+.env.*
+!.env.example
+
+# Runtime data
+core-api/app/data/mock.db
+core-api/app/data/mock.db-wal
+core-api/app/data/mock.db-shm
+n8n-instance/data/
+
+# Logs
+*.log
+logs/
+
+# OS and editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

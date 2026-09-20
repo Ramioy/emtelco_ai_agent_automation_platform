@@ -1,0 +1,50 @@
+[
+  {
+    "order_id": "order-001",
+    "client_id": "1010101010",
+    "status": "PENDING",
+    "estimated_delivery_date": "2026-09-24",
+    "delivery_address": "Calle 10 # 5-20, Bogota",
+    "products": ["laptop-002"]
+  },
+  {
+    "order_id": "order-002",
+    "client_id": "1010101010",
+    "status": "DISPATCHED",
+    "estimated_delivery_date": "2026-09-21",
+    "delivery_address": "Calle 10 # 5-20, Bogota",
+    "products": ["headphones-001"]
+  },
+  {
+    "order_id": "order-003",
+    "client_id": "1010101010",
+    "status": "DELIVERED",
+    "estimated_delivery_date": "2026-09-10",
+    "delivery_address": "Calle 10 # 5-20, Bogota",
+    "products": ["tablet-001"]
+  },
+  {
+    "order_id": "order-004",
+    "client_id": "1010101010",
+    "status": "CANCELLED",
+    "estimated_delivery_date": "2026-09-15",
+    "delivery_address": "Calle 10 # 5-20, Bogota",
+    "products": ["smartphone-002"]
+  },
+  {
+    "order_id": "order-005",
+    "client_id": "2020202020",
+    "status": "PROCESSING",
+    "estimated_delivery_date": "2026-09-23",
+    "delivery_address": "Carrera 45 # 12-34, Medellin",
+    "products": ["smartphone-001"]
+  },
+  {
+    "order_id": "order-006",
+    "client_id": "2020202020",
+    "status": "IN_TRANSIT",
+    "estimated_delivery_date": "2026-09-20",
+    "delivery_address": "Carrera 45 # 12-34, Medellin",
+    "products": ["laptop-001"]
+  }
+]

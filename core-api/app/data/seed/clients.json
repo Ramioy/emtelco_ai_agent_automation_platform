@@ -1,0 +1,14 @@
+[
+  {
+    "client_id": "1010101010",
+    "full_name": "Camila Rodriguez",
+    "phone": "3001112233",
+    "email": "camila.rodriguez@example.com"
+  },
+  {
+    "client_id": "2020202020",
+    "full_name": "Andres Gomez",
+    "phone": "6012345678",
+    "email": "andres.gomez@example.com"
+  }
+]

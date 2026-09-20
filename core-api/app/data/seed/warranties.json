@@ -1,0 +1,16 @@
+[
+  {
+    "warranty_id": "warranty-001",
+    "order_id": "order-002",
+    "product_id": "headphones-001",
+    "coverage_months": 36,
+    "purchase_date": "2026-07-01"
+  },
+  {
+    "warranty_id": "warranty-002",
+    "order_id": "order-003",
+    "product_id": "tablet-001",
+    "coverage_months": 12,
+    "purchase_date": "2023-01-01"
+  }
+]

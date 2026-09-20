@@ -1,0 +1,26 @@
+services:
+  api:
+    build: ./core-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_PATH=./app/data/mock.db
+      - TOOLS_API_KEY=${TOOLS_API_KEY:-change-me}
+    volumes:
+      - api-data:/app/app/data
+
+  n8n:
+    # n8n's own registry, not Docker Hub, to avoid anonymous-pull rate limits.
+    image: docker.n8n.io/n8nio/n8n:2.39.8
+    ports:
+      - "5678:5678"
+    environment:
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-America/Bogota}
+      - TZ=${GENERIC_TIMEZONE:-America/Bogota}
+    volumes:
+      - ./n8n-instance/data:/home/node/.n8n
+    depends_on:
+      - api
+
+volumes:
+  api-data:
